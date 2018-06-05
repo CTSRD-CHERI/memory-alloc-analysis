@@ -405,7 +405,7 @@ class Run:
         elif call == 'free':
             begin = int(arg[1], base=16)
         elif call == 'mmap':
-            begin = int(arg[1], base=16)
+            begin = int(res, base=16)
             end = begin + int(arg[2])
         elif call == 'munmap':
             begin = int(arg[1], base=16)
