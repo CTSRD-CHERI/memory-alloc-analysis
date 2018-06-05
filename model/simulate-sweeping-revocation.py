@@ -101,6 +101,7 @@ def intervaltree_query_coalesced(tree, point, **kwds):
 
 class Publisher:
     def __init__(self):
+        super().__init__()
         self.__subscribers = []
 
     def register_subscriber(self, s):
@@ -114,10 +115,53 @@ class Publisher:
                 pass
 
 
-class AllocatorAddrSpaceModel(Publisher):
+class BaseAddrSpaceModel:
+    def __init__(self, **kwds):
+        super().__init__()
+        self.size = 0
+        self.mapd_size = 0
+        self.allocd_size = 0
+        self.__addr_ivals = IntervalMap.from_valued_interval_domain(AddrInterval(0, 2**64, None))
+
+    @property
+    def size_kb(self):
+        return self.size // 2**10
+    @property
+    def size_mb(self):
+        return self.size // 2**20
+
+    @property
+    def mapd_size_kb(self):
+        return self.mapd_size // 2**10
+    @property
+    def mapd_size_mb(self):
+        return self.mapd_size // 2**20
+
+
+    def size_measured(self, size):
+        self.size = size
+
+
+    def _update(self, ival):
+        overlaps = self.__addr_ivals[ival.begin-1 : ival.end+1]
+        # XXX-LPT: use __init__ kwds.get('calc_amount_for_addr_ival_states', default=[])
+        mapd_size_old = sum(((i.end - i.begin) for i in overlaps if i.state is AddrIntervalState.MAPD))
+        allocd_size_old = sum(((i.end - i.begin) for i in overlaps if i.state is AddrIntervalState.ALLOCD))
+        self.__addr_ivals.add(ival)
+        overlaps = self.__addr_ivals[ival.begin-1 : ival.end+1]
+        mapd_size_new = sum(((i.end - i.begin) for i in overlaps if i.state is AddrIntervalState.MAPD))
+        allocd_size_new = sum(((i.end - i.begin) for i in overlaps if i.state is AddrIntervalState.ALLOCD))
+
+        self.mapd_size += mapd_size_new - mapd_size_old
+        self.allocd_size += allocd_size_new - allocd_size_old
+
+        #print('{0}\t_update_map with {1}\n\tmapd_size_old={2} mapd_size_new={3} self.mapd_size={4}'
+        #      .format(run.timestamp, ival, mapd_size_old, mapd_size_new, self.mapd_size), file=sys.stderr)
+
+
+class AllocatorAddrSpaceModel(BaseAddrSpaceModel, Publisher):
     def __init__(self):
         super().__init__()
-        self.allocd_size = 0
         self._addr_ivals = IntervalTree()
 
 
@@ -141,6 +185,7 @@ class AllocatorAddrSpaceModel(Publisher):
             self.publish('reused', begin, end)
         if overlaps:
             self._addr_ivals.chop(begin, end)
+        super()._update(interval)
         self._addr_ivals.add(interval)
 
 
@@ -160,6 +205,7 @@ class AllocatorAddrSpaceModel(Publisher):
         # Free the old allocation, just the part that does not overlap the new allocation
         interval_new = AddrInterval(begin_new, end_new, AddrIntervalState.ALLOCD)
         if interval_new.overlaps(interval_old):
+            super()._update(AddrInterval(interval_old.begin, interval_old.end, AddrIntervalState.FREED))
             self._addr_ivals.remove(interval_old)
             if interval_new.lt(interval_old):
                 self._addr_ivals.add(AddrInterval(interval_new.end, interval_old.end, AddrIntervalState.FREED))
@@ -176,13 +222,13 @@ class AllocatorAddrSpaceModel(Publisher):
         if interval:
             self._addr_ivals.remove(interval)
             if begin != interval.begin or interval.state is not AddrIntervalState.ALLOCD:
-                print('# freed({0:x}) misfrees {1}'.format(begin, interval), file=sys.stderr)
-                pass
+                print('{0}\tW: Freed({1:x}) misfrees {2}'.format(run.timestamp, begin, interval), file=sys.stderr)
             interval = AddrInterval(interval.begin, interval.end, AddrIntervalState.FREED)
         else:
             print('{0}\tW: No existing allocation to free at {1:x}, defaulting to one of size 1'
                   .format(run.timestamp, begin), file=sys.stderr)
             interval = AddrInterval(begin, begin + 1, AddrIntervalState.FREED)
+        super()._update(interval)
         self._addr_ivals.add(interval)
 
 
@@ -192,49 +238,18 @@ class AllocatorAddrSpaceModel(Publisher):
         assert not intervals_allocd, 'Bug: revoking address intervals between {0:x}-{1:x} that are still allocated {2}'\
                                   .format(begin, end, intervals_allocd)
 
-        self._addr_ivals.chop(begin, end)
-        self._addr_ivals.add(AddrInterval(begin, end, AddrIntervalState.REVOKED))
+        ival = AddrInterval(begin, end, AddrIntervalState.REVOKED)
+        super()._update(ival)
+        self._addr_ivals.chop(ival.begin, ival.end)
+        self._addr_ivals.add(ival)
 
 
-# XXX-LPT add mmapd, munmapd, mremap
-# __?__: how deal with the allocation site
-class AddrSpaceModel:
-    def __init__(self):
-        self.size = 0
-        self.mapd_size = 0
-        self._addr_ivals = IntervalMap.from_valued_interval_domain(AddrInterval(0, 2**64, None))
-
-    @property
-    def size_kb(self):
-        return self.size // 2**10
-    @property
-    def size_mb(self):
-        return self.size // 2**20
-
-    @property
-    def mapd_size_kb(self):
-        return self.mapd_size // 2**10
-    @property
-    def mapd_size_mb(self):
-        return self.mapd_size // 2**20
-
-
-    def size_measured(self, size):
-        self.size = size
-
-
+class AddrSpaceModel(BaseAddrSpaceModel):
     def mapd(self, begin, end):
-        self._update_map(AddrInterval(begin, end, AddrIntervalState.MAPD))
+        self._update(AddrInterval(begin, end, AddrIntervalState.MAPD))
 
     def unmapd(self, begin, end):
-        self._update_map(AddrInterval(begin, end, AddrIntervalState.UNMAPD))
-
-    def _update_map(self, ival):
-        mapd_size_old = sum(((i.end - i.begin) for i in self._addr_ivals[ival.begin:ival.end] if i.state is AddrIntervalState.MAPD))
-        self._addr_ivals.add(ival)
-        mapd_size_new = sum(((i.end - i.begin) for i in self._addr_ivals[ival.begin:ival.end] if i.state is AddrIntervalState.MAPD))
-
-        self.mapd_size += mapd_size_new - mapd_size_old
+        self._update(AddrInterval(begin, end, AddrIntervalState.UNMAPD))
 
 
 class AllocationStateSubscriber:
