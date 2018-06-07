@@ -232,16 +232,22 @@ class AllocatorAddrSpaceModel(BaseAddrSpaceModel, Publisher):
         self._addr_ivals.add(interval)
 
 
-    def revoked(self, begin, end):
-        intervals = self._addr_ivals[begin:end]
-        intervals_allocd = [ival for ival in intervals if ival.state is AddrIntervalState.ALLOCD]
-        assert not intervals_allocd, 'Bug: revoking address intervals between {0:x}-{1:x} that are still allocated {2}'\
-                                  .format(begin, end, intervals_allocd)
+    def revoked(self, *bes):
+        if not isinstance(bes[0], tuple):
+            bes = [(bes[0], bes[1])]
+        err_str = ''
+        for begin, end in bes:
+            ivals_allocd = [ival for ival in self._addr_ivals[begin:end] if ival.state is AddrIntervalState.ALLOCD]
+            if ivals_allocd:
+                err_str += 'Bug: revoking address intervals between {0:x}-{1:x} that are still allocated {2}\n'\
+                           .format(begin, end, ivals_allocd)
+        assert not err_str, err_str
 
-        ival = AddrInterval(begin, end, AddrIntervalState.REVOKED)
-        super()._update(ival)
-        self._addr_ivals.chop(ival.begin, ival.end)
-        self._addr_ivals.add(ival)
+        for begin, end in bes:
+            ival = AddrInterval(begin, end, AddrIntervalState.REVOKED)
+            super()._update(ival)
+            self._addr_ivals.chop(ival.begin, ival.end)
+            self._addr_ivals.add(ival)
 
 
 class AddrSpaceModel(BaseAddrSpaceModel):
@@ -272,6 +278,10 @@ class BaseSweepingRevoker(AllocationStateSubscriber):
     @property
     def swept_gb(self):
         return self.swept // 2**30
+
+
+    def revoked(self, *bes):
+        self._sweep(addr_space.size, [AddrInterval(b, e, AddrIntervalState.FREED) for b, e in bes])
 
 
     # XXX-LPT: pack into sweeps of L addr_ivals, where L is an imposed limit
@@ -410,6 +420,12 @@ class Run:
         elif call == 'munmap':
             begin = int(arg[1], base=16)
             end = begin + int(arg[2])
+        elif call == 'revoke':
+            begin = [int(b, base=16) for b in arg[1::2]]
+            end = [int(e, base=16) for e in arg[2::2]]
+            if len(begin) != len(end):
+                raise ValuError('revoke call trace should have an even number of args, not {0}'
+                                .format(len(begin) + len(end)))
 
         #assert begin != 0, 'timestamp={6} call={0} arg1={1} arg2={2} res={3}\tbegin={4} end={5}'.format(call, arg1, arg2, res, begin, end, timestamp)
 
@@ -435,6 +451,9 @@ class Run:
         elif call in ('munmap', ):
             meth = 'unmapd'
             args = (begin, end)
+        elif call in ('revoke', ):
+            meth = 'revoked'
+            args = tuple(zip(begin, end))
         else:
             raise ValueError('unknown call trace "{0}"'.format(call))
 
@@ -464,7 +483,7 @@ revoker = revoker_cls(*sys.argv[2:])
 alloc_state.register_subscriber(revoker)
 
 run = Run(sys.stdin,
-          trace_listeners=[alloc_state, addr_space],
+          trace_listeners=[alloc_state, addr_space, revoker],
           addr_space_sample_listeners=[addr_space, ])
 run.replay()
 
