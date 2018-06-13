@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-( { py_cmd=`which pypy3` ;} || { py_cmd=`which python3` ;} ) && { cpy_cmd=`which python3` ;}
+{ py_cmd=`which pypy3` ;} || { py_cmd=`which python3` ;} && { cpy_cmd=`which python3` ;}
 test $? -eq 0 || { echo "Python 3 not found"; exit 1 ;}
 
 $py_cmd ./simulate-sweeping-revocation.py | graph/graph.py
