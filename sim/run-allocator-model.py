@@ -5,8 +5,13 @@ import importlib.machinery
 import importlib.util
 import logging
 import sys
-from run import Run
-from unrun import Unrun
+
+if __name__ == "__main__" and __package__ is None:
+    import os
+    sys.path.append(os.path.dirname(sys.path[0]))
+
+from common.run import Run
+from common.unrun import Unrun
 
 # Parse command line arguments
 argp = argparse.ArgumentParser(description='Interpret an allocation trace')
@@ -18,6 +23,8 @@ argp.add_argument('allocator', action='store',
 argp.add_argument("--log-level", help="Set the logging level",
                   choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
                   default="INFO")
+argp.add_argument('remainder', nargs=argparse.REMAINDER,
+                  help="Arguments fed to allocator model")
 args = argp.parse_args()
 
 # Set up logging
@@ -34,7 +41,7 @@ if allocspecs is None :
 allocmod   = importlib.util.module_from_spec(allocspecs)
 allocspecs.loader.exec_module(allocmod)
 
-alloc = allocmod.Allocator(cliargs=args)
+alloc = allocmod.Allocator(cliargs=args.remainder)
 
 # XXX OLD
 # if args.use_allocated_size :

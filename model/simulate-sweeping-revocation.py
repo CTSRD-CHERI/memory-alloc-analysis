@@ -34,10 +34,14 @@ import numpy
 
 # https://pypi.org/project/bintrees
 from intervaltree import Interval, IntervalTree
-from intervalmap import IntervalMap
 
-from publisher import Publisher
-from run import Run
+if __name__ == "__main__" and __package__ is None:
+    import os
+    sys.path.append(os.path.dirname(sys.path[0]))
+
+from common.intervalmap import IntervalMap
+from common.publisher import Publisher
+from common.run import Run
 
 @unique
 class AddrIntervalState(Enum):
