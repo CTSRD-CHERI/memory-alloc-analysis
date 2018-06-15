@@ -170,7 +170,8 @@ class IntervalMap:
             k = d.iloc[ix]
             (szex, vex) = d[k]
 
-            assert k < loc and k + szex > loc, 'Off the map (to the right?)'
+            if not (k < loc and k + szex > loc):
+                raise ValueError ('Off the map to the right')
     
             
             if v == vex :
@@ -198,7 +199,7 @@ class IntervalMap:
             d[loc] = (szex, vex)
             ix = ix + 1
         else :
-            assert False, 'Off the map to the left'
+            raise ValueError ('Off the map to the left')
      
         if sz == szex:
             if v == vex:
