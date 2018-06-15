@@ -2,4 +2,6 @@
 { py_cmd=`which pypy3` ;} || { py_cmd=`which python3` ;} && { cpy_cmd=`which python3` ;}
 test $? -eq 0 || { echo "Python 3 not found"; exit 1 ;}
 
-$py_cmd ./simulate-sweeping-revocation.py ${1:-CompactingSweepingRevoker} | tee >(graph/graph.py)
+my_dir=`dirname $0`
+
+$py_cmd ${my_dir}/simulate-sweeping-revocation.py ${1:-CompactingSweepingRevoker} | tee >(${my_dir}/graph/graph.py)
