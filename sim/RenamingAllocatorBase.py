@@ -20,7 +20,7 @@
 # events, leaving that to this class.  size_measured is passed through
 # unmodified.
 
-from common.publisher import Publisher
+from common.misc import Publisher
 
 class RenamingAllocatorBase (Publisher):
   __slots__ = ('_tva2eva')

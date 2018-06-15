@@ -10,8 +10,7 @@ if __name__ == "__main__" and __package__ is None:
     import os
     sys.path.append(os.path.dirname(sys.path[0]))
 
-from common.run import Run
-from common.unrun import Unrun
+from common.run import Run, Unrun
 
 # Parse command line arguments
 argp = argparse.ArgumentParser(description='Interpret an allocation trace')

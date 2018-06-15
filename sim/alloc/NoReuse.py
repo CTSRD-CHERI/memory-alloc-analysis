@@ -5,7 +5,7 @@
 # using both Run and Unrun and might be directly useful as input to other
 # allocation models which want to treat the trace VA as an OID.
 
-from common.publisher import Publisher
+from common.misc import Publisher
 from common.intervalmap import IntervalMap
 from sim.RenamingAllocatorBase import RenamingAllocatorBase
 

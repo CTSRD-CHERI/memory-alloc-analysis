@@ -11,7 +11,7 @@ import logging
 import sys
 
 from common.intervalmap import IntervalMap
-from common.publisher import Publisher
+from common.misc import Publisher
 from sim.RenamingAllocatorBase import RenamingAllocatorBase
 
 # Power of two, greater than page log
