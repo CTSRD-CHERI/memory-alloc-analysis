@@ -1,4 +1,4 @@
-def discard(*args, **kwargs): pass
+def _discard(*args, **kwargs): pass
 
 class Publisher:
     def __init__(self):

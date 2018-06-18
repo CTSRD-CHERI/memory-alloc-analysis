@@ -3,7 +3,7 @@ import sys
 
 # Parser and driver for trace consumers
 
-def discard(*args, **kwargs): pass
+def _discard(*args, **kwargs): pass
 
 class Run:
     def __init__(self, file, **kwds):
