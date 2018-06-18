@@ -138,7 +138,11 @@ class Allocator(RenamingAllocatorBase):
     self._njunkb = 0    # Number of buckets in JUNK state
     self._bix2state = IntervalMap(0, 2**(64 - bucklog), BuckSt.TIDY)
 # --------------------------------------------------------------------- }}}
-# Additional state assertions ----------------------------------------- {{{
+# Additional state assertions and diagnostics ------------------------- {{{
+
+  def _state_diag(self):
+    return (self._bix2szbm, self._sz2bixp, [x for x in self._bix2state])
+
   def _state_asserts(self):
     # logging.debug("%r %r %r", self._bix2szbm, self._sz2bixp, [x for x in self._bix2state])
 
@@ -156,8 +160,7 @@ class Allocator(RenamingAllocatorBase):
         for bc in range(b[0],b[0]+b[1]):
             (bsz, _) = self._bix2szbm[bc]
             assert self._sz2bixp.get(bsz)[0] == bc, \
-                ("BUMP miss", bc, bsz, self._bix2szbm, self._sz2bixp, \
-                    [x for x in self._bix2state])
+                ("BUMP miss", bc, bsz, self._state_diag())
 
     # Same for WAIT states.  Not all WAIT-state buckets are necessarily indexed,
     # tho', so we have to be somewhat careful 
@@ -166,8 +169,7 @@ class Allocator(RenamingAllocatorBase):
         bce = b[0] + b[1]
         while bc <= bce:
             assert self._bix2szbm.get(bc) is not None, \
-                ("B/W miss", bc, self._bix2szbm, self._sz2bixp, \
-                    [x for x in self._bix2state])
+                ("B/W miss", bc, self._state_diag())
             (bsz, _) = self._bix2szbm[bc]
             bc += bsz
 
@@ -176,14 +178,13 @@ class Allocator(RenamingAllocatorBase):
     for sz in self._sz2bixp :
         (bc, _) = self._sz2bixp[sz]
         (_, _, v) = self._bix2state[bc]
-        assert v == BuckSt.BUMP, ("BUMP botch", bc, v, self._bix2szbm, \
-                    self._sz2bixp, [x for x in self._bix2state])
+        assert v == BuckSt.BUMP, ("BUMP botch", bc, v, self._state_diag())
 
     # All busy buckets are marked as such?
     for bc in self._bix2szbm :
         (_, _, v) = self._bix2state[bc]
         assert v in [BuckSt.BUMP, BuckSt.WAIT], ("B/W botch", bc, v, \
-                    self._bix2szbm, self._sz2bixp, [x for x in self._bix2state])
+                    self._state_diag())
 
 # --------------------------------------------------------------------- }}}
 # Revocation logic ---------------------------------------------------- {{{
