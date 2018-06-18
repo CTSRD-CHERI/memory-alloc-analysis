@@ -231,7 +231,8 @@ class Allocator(RenamingAllocatorBase):
         if brs is not None :
             self._njunkb -= brs[2]
             self._bix2state.mark(brs[0],brs[1],BuckSt.TIDY)
-            self._publish('revoked', [(brs[0], brs[0]+brs[1])])
+            self._publish('revoked', [(brs[0] << bucklog, \
+                                      (brs[0]+brs[1]) << bucklog)])
 
 # --------------------------------------------------------------------- }}}
 # Allocation ---------------------------------------------------------- {{{
