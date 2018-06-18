@@ -1,3 +1,5 @@
+def discard(*args, **kwargs): pass
+
 class Publisher:
     def __init__(self):
         super().__init__()
@@ -8,7 +10,4 @@ class Publisher:
 
     def _publish(self, meth, *args, **kwargs):
         for s in self.__subscribers:
-            try:
-                getattr(s, meth)(self, *args, **kwargs)
-            except AttributeError:
-                pass
+            getattr(s, meth, discard)(self, *args, **kwargs)

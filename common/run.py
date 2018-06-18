@@ -3,6 +3,8 @@ import sys
 
 # Parser and driver for trace consumers
 
+def discard(*args, **kwargs): pass
+
 class Run:
     def __init__(self, file, **kwds):
         self.timestamp = 0
@@ -116,11 +118,7 @@ class Run:
             raise ValueError('unknown call trace "{0}"'.format(call))
 
         for tl in self._trace_listeners:
-            try:
-                getattr(tl, meth)(*args)
-            except AttributeError:
-                pass
-
+            getattr(tl, meth, discard)(*args)
 
     def _parse_addr_space_sample(self, line):
         size = int(line)
