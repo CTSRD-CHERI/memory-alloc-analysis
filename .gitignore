@@ -1,0 +1,9 @@
+# Editor temporaries
+.*.swp
+
+# Python bytecode cache
+__pycache__
+
+# Data and generated files
+runs
+*-aspace_stats-vs-time.eps
