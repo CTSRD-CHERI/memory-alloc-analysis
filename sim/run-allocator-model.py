@@ -29,6 +29,10 @@ args = argp.parse_args()
 # Set up logging
 logging.basicConfig(level=logging.getLevelName(args.log_level))
 
+# Prepare Run
+run = Run(sys.stdin)
+tslam = lambda : run.timestamp_ns
+
 # This cannot possibly be the right answer
 allocspecs = importlib.util.find_spec(args.allocator)
 if allocspecs is None :
@@ -40,7 +44,7 @@ if allocspecs is None :
 allocmod   = importlib.util.module_from_spec(allocspecs)
 allocspecs.loader.exec_module(allocmod)
 
-alloc = allocmod.Allocator(cliargs=args.remainder)
+alloc = allocmod.Allocator(tslam=tslam, cliargs=args.remainder)
 
 # XXX OLD
 # if args.use_allocated_size :
@@ -48,8 +52,7 @@ alloc = allocmod.Allocator(cliargs=args.remainder)
 # else :
 #   szcb = lambda : parser.addr_space_size
 
-run = Run(sys.stdin)
-unrun = Unrun(lambda : run.timestamp_ns, out=sys.stdout)
+unrun = Unrun(tslam, out=sys.stdout)
  
 run._trace_listeners += [ alloc ]
 run._addr_space_sample_listeners += [ alloc ]
