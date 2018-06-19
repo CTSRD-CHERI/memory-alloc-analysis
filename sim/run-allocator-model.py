@@ -22,9 +22,27 @@ argp.add_argument('allocator', action='store',
 argp.add_argument("--log-level", help="Set the logging level",
                   choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
                   default="INFO")
+
+# We'd like to write output, with logging, to a single file on occasion.
+# (It makes debugging easier when both streams are temporally merged)
+#
+# Python doesn't give us very good control of its buffering options;
+# we'd like to just line-buffer sys.stdout and sys.stderr both, so that
+# even though they have separate buffers, if they were writing to the
+# same file descriptor, things would work out.  However, because we can't
+# (can't? easily?) do that, we can just assign one to the other so they
+# share a single buffer and underlying fd.  In particular, we assign
+# sys.stderr to sys.stdout, so that all output emerges on fd 1.
+argp.add_argument('--stdouterr', help='Equate sys.stdout and sys.stderr',
+                  action='store_const', const=True, default=False)
+
 argp.add_argument('remainder', nargs=argparse.REMAINDER,
                   help="Arguments fed to allocator model")
 args = argp.parse_args()
+
+if args.stdouterr :
+  sys.stderr.close()
+  sys.stderr = sys.stdout
 
 # Set up logging
 logging.basicConfig(level=logging.getLevelName(args.log_level))
