@@ -46,10 +46,11 @@ class Run:
                 self._ts_initial = timestamp
             self.timestamp = timestamp
 
-            if rest.count('\t') > 1:
-                self._parse_trace(rest)
-            else:
+            fields = rest.count('\t') + 1
+            if fields == 2:
                 self._parse_addr_space_sample(rest)
+            else:
+                self._parse_trace(rest)
 
 
     def _parse_trace(self, line):
@@ -121,9 +122,10 @@ class Run:
             getattr(tl, meth, _discard)(*args)
 
     def _parse_addr_space_sample(self, line):
-        size = int(line)
+        total_size, sweep_size = [int(s) for s in line.split('\t')]
         for sl in self._addr_space_sample_listeners:
-            sl.size_measured(size)
+            sl.size_measured(total_size)
+            sl.sweep_size_measured(sweep_size)
 
 
 # Trace producer, the inverse of Run

@@ -111,6 +111,7 @@ class BaseAddrSpaceModel:
     def __init__(self, **kwds):
         super().__init__()
         self.size = 0
+        self.sweep_size = 0
         self.mapd_size = 0
         self.allocd_size = 0
         self.__addr_ivals = IntervalMap.from_valued_interval_domain(AddrInterval(0, 2**64, None))
@@ -123,6 +124,13 @@ class BaseAddrSpaceModel:
         return self.size // 2**20
 
     @property
+    def sweep_size_kb(self):
+        return self.sweep_size // 2**10
+    @property
+    def sweep_size_mb(self):
+        return self.sweep_size // 2**20
+
+    @property
     def mapd_size_kb(self):
         return self.mapd_size // 2**10
     @property
@@ -132,6 +140,10 @@ class BaseAddrSpaceModel:
 
     def size_measured(self, size):
         self.size = size
+
+
+    def sweep_size_measured(self, sweep_size):
+        self.sweep_size = sweep_size
 
 
     def _update(self, ival):
@@ -338,10 +350,10 @@ class CompactingSweepingRevoker(BaseSweepingRevoker):
 
 
 def print_update():
-    print('{0}\t{1}\t{2}\t{3}\t{4}'.format(run.timestamp, addr_space.size, addr_space.mapd_size,
-          alloc_state.allocd_size, revoker.swept), file=sys.stdout)
-print('#{0}\t{1}\t{2}\t{3}\t{4}'.format('timestamp', 'addr-space-total', 'addr-space-mapped',
-      'allocator-allocd', 'allocator-swept'))
+    print('{0}\t{1}\t{2}\t{3}\t{4}\t{5}'.format(run.timestamp, addr_space.size, addr_space.sweep_size,
+          addr_space.mapd_size, alloc_state.allocd_size, revoker.swept), file=sys.stdout)
+print('#{0}\t{1}\t{2}\t{3}\t{4}\t{5}'.format('timestamp', 'addr-space-total', 'addr-space-sweep',
+      'addr-space-mapped', 'allocator-allocd', 'allocator-swept'), file=sys.stdout)
 
 alloc_state = AllocatorAddrSpaceModel()
 addr_space = AddrSpaceModel()
