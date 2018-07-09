@@ -10,4 +10,4 @@ class Publisher:
 
     def _publish(self, meth, *args, **kwargs):
         for s in self.__subscribers:
-            getattr(s, meth, discard)(self, *args, **kwargs)
+            getattr(s, meth, _discard)(self, *args, **kwargs)

@@ -118,7 +118,7 @@ class Run:
             raise ValueError('unknown call trace "{0}"'.format(call))
 
         for tl in self._trace_listeners:
-            getattr(tl, meth, discard)(*args)
+            getattr(tl, meth, _discard)(*args)
 
     def _parse_addr_space_sample(self, line):
         size = int(line)
