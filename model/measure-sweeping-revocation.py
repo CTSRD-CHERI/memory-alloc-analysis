@@ -255,12 +255,19 @@ class AllocatorAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
             self._addr_ivals.chop(ival.begin, ival.end)
             self._addr_ivals.add(ival)
 
+    # Mapped/unmapped by the allocator for its own use
+    def mapd(self, callstack, begin, end):
+        if any((callstack.find(frame) >= 0 for frame in ('malloc', 'calloc', 'realloc', 'free'))):
+            self._update(AddrInterval(begin, end, AddrIntervalState.MAPD))
+    def unmapd(self, callstack, begin, end):
+        self._update(AddrInterval(begin, end, AddrIntervalState.UNMAPD))
+
 
 class AddrSpaceModel(BaseIntervalAddrSpaceModel):
-    def mapd(self, begin, end):
+    def mapd(self, _, begin, end):
         self._update(AddrInterval(begin, end, AddrIntervalState.MAPD))
 
-    def unmapd(self, begin, end):
+    def unmapd(self, _, begin, end):
         self._update(AddrInterval(begin, end, AddrIntervalState.UNMAPD))
 
 class AccountingAddrSpaceModel(BaseAddrSpaceModel):
@@ -373,7 +380,7 @@ class CompactingSweepingRevoker(BaseSweepingRevoker):
 
 def print_update():
     print('{0}\t{1}\t{2}\t{3}\t{4}\t{5}'.format(run.timestamp, addr_space.size, addr_space.sweep_size,
-          addr_space.mapd_size, alloc_state.allocd_size, revoker.swept), file=sys.stdout)
+          alloc_state.mapd_size, alloc_state.allocd_size, revoker.swept), file=sys.stdout)
 print('#{0}\t{1}\t{2}\t{3}\t{4}\t{5}'.format('timestamp', 'addr-space-total', 'addr-space-sweep',
       'addr-space-mapped', 'allocator-allocd', 'allocator-swept'), file=sys.stdout)
 

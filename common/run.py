@@ -54,7 +54,7 @@ class Run:
 
 
     def _parse_trace(self, line):
-        _, call, arg, res = line.split('\t')
+        callstack, call, arg, res = line.split('\t')
         arg = arg.split(' '); arg.insert(0, 0) # 1-indexed
 
         if call == 'malloc':
@@ -108,10 +108,10 @@ class Run:
             args = (begin, )
         elif call in ('mmap', ):
             meth = 'mapd'
-            args = (begin, end)
+            args = (callstack, begin, end)
         elif call in ('munmap', ):
             meth = 'unmapd'
-            args = (begin, end)
+            args = (callstack, begin, end)
         elif call in ('revoke', ):
             meth = 'revoked'
             args = tuple(zip(begin, end))
