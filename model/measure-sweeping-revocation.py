@@ -161,6 +161,7 @@ class BaseIntervalAddrSpaceModel(BaseAddrSpaceModel):
         self.mapd_size += mapd_size_new - mapd_size_old
         self.allocd_size += allocd_size_new - allocd_size_old
 
+        output.update()
         #print('{0}\t_update_map with {1}\n\tmapd_size_old={2} mapd_size_new={3} self.mapd_size={4}'
         #      .format(run.timestamp, ival, mapd_size_old, mapd_size_new, self.mapd_size), file=sys.stderr)
 
@@ -324,27 +325,27 @@ class BaseSweepingRevoker(AllocationStateSubscriber):
                             .format(len(addr_ivals), self._capacity_ivals))
 
         # XXX: can I format AddrInterval like [x+mb]
-        ts_str = '{0:>' + str(len(str(run.timestamp))) + '}'
-        if hasattr(self, '_ns_last_print'):
-            delta_ns = run.timestamp_ns - self._ns_last_print
-            if delta_ns > 10**9:
-                delta_str = str(delta_ns // 10**9) + 's'
-            elif delta_ns > 10**6:
-                delta_str = str(delta_ns // 10**6) + 'ms'
-            elif delta_ns > 10**3:
-                delta_str = str(delta_ns // 10**3) + 'us'
-            else:
-                delta_str = str(delta_ns) + 'ns'
-            ts_str = ts_str.format('+' + delta_str)
-        else:
-            ts_str = ts_str.format(run.timestamp)
+        #ts_str = '{0:>' + str(len(str(run.timestamp))) + '}'
+        #if hasattr(self, '_ns_last_print'):
+        #    delta_ns = run.timestamp_ns - self._ns_last_print
+        #    if delta_ns > 10**9:
+        #        delta_str = str(delta_ns // 10**9) + 's'
+        #    elif delta_ns > 10**6:
+        #        delta_str = str(delta_ns // 10**6) + 'ms'
+        #    elif delta_ns > 10**3:
+        #        delta_str = str(delta_ns // 10**3) + 'us'
+        #    else:
+        #        delta_str = str(delta_ns) + 'ns'
+        #    ts_str = ts_str.format('+' + delta_str)
+        #else:
+        #    ts_str = ts_str.format(run.timestamp)
         #print('{0}\tSweep {1:d}MB revoking references to {2} intervals'.format(ts_str, amount // 2**20, addr_ivals),
         #      file=sys.stdout)
-        print_update()
-        self._ns_last_print = run.timestamp_ns
+        #self._ns_last_print = run.timestamp_ns
+        #self.sweeps.append((run.timestamp_ns, amount))
 
         self.swept += amount
-        self.sweeps.append((run.timestamp_ns, amount))
+        output.update()
 
 
 class NaiveSweepingRevoker(BaseSweepingRevoker):
@@ -378,11 +379,21 @@ class CompactingSweepingRevoker(BaseSweepingRevoker):
             alloc_state.revoked(ival.begin, ival.end)
 
 
-def print_update():
-    print('{0}\t{1}\t{2}\t{3}\t{4}\t{5}'.format(run.timestamp, addr_space.size, addr_space.sweep_size,
-          alloc_state.mapd_size, alloc_state.allocd_size, revoker.swept), file=sys.stdout)
-print('#{0}\t{1}\t{2}\t{3}\t{4}\t{5}'.format('timestamp', 'addr-space-total', 'addr-space-sweep',
-      'addr-space-mapped', 'allocator-allocd', 'allocator-swept'), file=sys.stdout)
+class Output:
+    def __init__(self):
+        self._update_last_ms = 0
+        self._update_period_ms = 100
+        self._print_header()
+
+    def _print_header(self):
+        print('#{0}\t{1}\t{2}\t{3}\t{4}\t{5}'.format('timestamp', 'addr-space-total', 'addr-space-sweep',
+              'allocator-mapped', 'allocator-allocd', 'allocator-swept'), file=sys.stdout)
+
+    def update(self):
+        if self._update_last_ms == 0 or run.timestamp_ms - self._update_last_ms > self._update_period_ms:
+            print('{0}\t{1}\t{2}\t{3}\t{4}\t{5}'.format(run.timestamp, addr_space.size, addr_space.sweep_size,
+                  alloc_state.mapd_size, alloc_state.allocd_size, revoker.swept), file=sys.stdout)
+            self._update_last_ms = run.timestamp_ms
 
 if sys.argv[1] == "account":
     alloc_state = AccountingAddrSpaceModel()
@@ -395,11 +406,12 @@ else :
     revoker = revoker_cls(*sys.argv[2:])
     alloc_state.register_subscriber(revoker)
 
+output = Output()
 run = Run(sys.stdin,
           trace_listeners=[alloc_state, addr_space, revoker],
           addr_space_sample_listeners=[addr_space, ])
 run.replay()
-
+output.update()
 
 '''
 print('----', file=sys.stdout)
