@@ -12,7 +12,7 @@ x = 0
 y1, y2, y3, y4, y5 = 1, 2, 3, 4, 5
 
 data0[x] -= data0[x][0]    # offset time from the start
-time_s = data0[x] // 10**9 # time ns to s
+time_s = data0[x] / 10**9 # time ns to s
 
 data0[y1] //= 2**20        # aspace-total b to mb
 data0[y2] //= 2**20        # aspace-sweep b to mb
