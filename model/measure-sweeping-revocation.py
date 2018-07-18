@@ -31,6 +31,8 @@ from collections import namedtuple
 from enum import Enum, unique
 import sys
 import numpy
+import logging
+import argparse
 
 # https://pypi.org/project/bintrees
 from intervaltree import Interval, IntervalTree
@@ -162,8 +164,8 @@ class BaseIntervalAddrSpaceModel(BaseAddrSpaceModel):
         self.allocd_size += allocd_size_new - allocd_size_old
 
         output.update()
-        #print('{0}\t_update_map with {1}\n\tmapd_size_old={2} mapd_size_new={3} self.mapd_size={4}'
-        #      .format(run.timestamp, ival, mapd_size_old, mapd_size_new, self.mapd_size), file=sys.stderr)
+        #logger.info('%d\t_update_map with %s\n\tmapd_size_old=%d mapd_size_new=%d self.mapd_size=%d',
+        #      run.timestamp, ival, mapd_size_old, mapd_size_new, self.mapd_size)
 
 
 class AllocatorAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
@@ -178,8 +180,8 @@ class AllocatorAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
         overlaps_allocd = [o for o in overlaps if o.state is AddrIntervalState.ALLOCD]
         overlaps_freed = [o for o in overlaps if o.state is AddrIntervalState.FREED]
         if overlaps_allocd:
-            print('{0}\tE: New allocation {1} overlaps existing allocations {2}, chopping them out'
-                 .format(run.timestamp, interval, overlaps_allocd), file=sys.stderr)
+            logger.error('%d\tE: New allocation %s overlaps existing allocations %s, chopping them out',
+                 run.timestamp, interval, overlaps_allocd)
 
             #interval_at_begin = self._addr_ivals[begin]
             #assert len(interval_at_begin) <= 1, 'Bug: overlapping address intervals at {0:x} {1}'
@@ -199,15 +201,13 @@ class AllocatorAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
     def reallocd(self, begin_old, begin_new, end_new):
         interval_old = intervaltree_query_checked(self._addr_ivals, begin_old)
         if not interval_old:
-            print('{0}\tW: No existing allocation to realloc at {1:x}, doing just alloc'
-                  .format(run.timestamp, begin_old), file=sys.stderr)
-
+            logger.warning('%d\tW: No existing allocation to realloc at %x, doing just alloc',
+                  run.timestamp, begin_old)
             self.allocd(begin_new, end_new)
             return
         if interval_old.state is not AddrIntervalState.ALLOCD:
-            print('{0}\tE: Realloc of non-allocated interval {1}, assuming it is allocated'
-                  .format(run.timestamp, interval_old), file=sys.stderr)
-            pass
+            logger.error('%d\tE: Realloc of non-allocated interval %s, assuming it is allocated',
+                  run.timestamp, interval_old)
 
         # Free the old allocation, just the part that does not overlap the new allocation
         interval_new = AddrInterval(begin_new, end_new, AddrIntervalState.ALLOCD)
@@ -229,11 +229,11 @@ class AllocatorAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
         if interval:
             self._addr_ivals.remove(interval)
             if begin != interval.begin or interval.state is not AddrIntervalState.ALLOCD:
-                print('{0}\tW: Freed({1:x}) misfrees {2}'.format(run.timestamp, begin, interval), file=sys.stderr)
+                logger.warning('%d\tW: Freed(%x) misfrees %s', run.timestamp, begin, interval)
             interval = AddrInterval(interval.begin, interval.end, AddrIntervalState.FREED)
         else:
-            print('{0}\tW: No existing allocation to free at {1:x}, defaulting to one of size 1'
-                  .format(run.timestamp, begin), file=sys.stderr)
+            logger.warning('%d\tW: No existing allocation to free at %x, defaulting to one of size 1',
+                  run.timestamp, begin)
             interval = AddrInterval(begin, begin + 1, AddrIntervalState.FREED)
         super()._update(interval)
         self._addr_ivals.add(interval)
@@ -395,15 +395,32 @@ class Output:
                   alloc_state.mapd_size, alloc_state.allocd_size, revoker.swept), file=sys.stdout)
             self._update_last_ms = run.timestamp_ms
 
-if sys.argv[1] == "account":
+
+# Parse command line arguments
+argp = argparse.ArgumentParser(description='Model allocation from a trace and output various measurements')
+argp.add_argument("--log-level", help="Set the logging level",
+                  choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL/default/"],
+                  default="CRITICAL")
+argp.add_argument('revoker', choices=["NaiveSweepingRevoker/default/", "CompactingSweepingRevoker", "account"],
+                  default='NaiveSweepingRevoker',
+                  help="Select the revoker type, or 'account' to assume error-free trace and speed up the"
+                  " stats gathering.")
+args = argp.parse_args()
+
+# Set up logging
+logging.basicConfig(level=logging.getLevelName(args.log_level), format="%(message)s")
+logger = logging.getLogger()
+
+# Set up the model
+if args.revoker == "account":
     alloc_state = AccountingAddrSpaceModel()
     addr_space = AccountingAddrSpaceModel()
     revoker = BaseSweepingRevoker()
-else :
+else:
     alloc_state = AllocatorAddrSpaceModel()
     addr_space = AddrSpaceModel()
-    revoker_cls = globals()[sys.argv[1]]
-    revoker = revoker_cls(*sys.argv[2:])
+    revoker_cls = globals()[args.revoker]
+    revoker = revoker_cls()
     alloc_state.register_subscriber(revoker)
 
 output = Output()
@@ -411,7 +428,7 @@ run = Run(sys.stdin,
           trace_listeners=[alloc_state, addr_space, revoker],
           addr_space_sample_listeners=[addr_space, ])
 run.replay()
-output.update()
+output.update()  # ensure at least one line of output
 
 '''
 print('----', file=sys.stdout)
