@@ -33,6 +33,7 @@ import sys
 import numpy
 import logging
 import argparse
+import itertools
 
 # https://pypi.org/project/bintrees
 from intervaltree import Interval, IntervalTree
@@ -87,6 +88,8 @@ def intervaltree_query_checked(tree, point):
     return ival.pop() if ival else None
 
 
+# XXX-LPT: Should be internalised by AllocatorAddrSpaceModel, and use the backing intervalmap
+# at least for the coalesce-with-self part of coalescing
 def intervaltree_query_coalesced(tree, point, **kwds):
     ival = intervaltree_query_checked(tree, point)
     if not ival:
@@ -168,9 +171,23 @@ class BaseIntervalAddrSpaceModel(BaseAddrSpaceModel):
         #      run.timestamp, ival, mapd_size_old, mapd_size_new, self.mapd_size)
 
 
+    def addr_ivals_coalesced_sorted(self, begin=None, end=None):
+        if begin is not None and end is not None:
+            return [i for i in self.__addr_ivals[begin:end] if i.value is not None]
+        else:
+            return [i for i in self.__addr_ivals if i.value is not None]
+
+    def addr_ival_coalesced(self, point):
+        i = self.__addr_ivals[point]
+        return i if i.value is not None else None
+
+
+
 class AllocatorAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
     def __init__(self):
         super().__init__()
+        # _addr_ivals should be protected (i.e. named __addr_ivals), but external visibility
+        # is still needed; see intervaltree_query_coalesced and its usage
         self._addr_ivals = IntervalTree()
 
 
@@ -219,6 +236,7 @@ class AllocatorAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
             if interval_new.gt(interval_old):
                 self._addr_ivals.add(AddrIval(interval_old.begin, interval_new.begin, AddrIvalState.FREED))
         else:
+            # XXX use _freed and eliminate spurious W/E reporting
             self.freed(begin_old)
 
         self.allocd(begin_new, end_new)
@@ -264,6 +282,16 @@ class AllocatorAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
         self._update(AddrIval(begin, end, AddrIvalState.UNMAPD))
 
 
+    def addr_ivals(self, begin=None, end=None):
+        if begin is not None and end is not None:
+            return self._addr_ivals[begin:end]
+        else:
+            return self._addr_ivals[:]
+
+    def addr_ival(self, point):
+        return intervaltree_query_checked(self._addr_ivals, point)
+
+
 class AddrSpaceModel(BaseIntervalAddrSpaceModel):
     def mapd(self, _, begin, end):
         self._update(AddrIval(begin, end, AddrIvalState.MAPD))
@@ -294,11 +322,12 @@ class AccountingAddrSpaceModel(BaseAddrSpaceModel):
         self.freed(obegin)
         self.allocd(nbegin, nend)
 
-class AllocationStateSubscriber:
+class AllocatorAddrSpaceModelSubscriber:
     def reused(self, alloc_state, begin, end):
         raise NotImplemented
 
-class BaseSweepingRevoker(AllocationStateSubscriber):
+
+class BaseSweepingRevoker(AllocatorAddrSpaceModelSubscriber):
     def __init__(self, capacity_ivals=2**64):
         super().__init__()
         self.swept = 0
@@ -349,9 +378,8 @@ class BaseSweepingRevoker(AllocationStateSubscriber):
 
 
 class NaiveSweepingRevoker(BaseSweepingRevoker):
-    # XXX-LPT refactor private attribute access
     def reused(self, alloc_state, begin, end):
-        intervals = [i for i in alloc_state._addr_ivals[begin:end] if i.state is AddrIvalState.FREED]
+        intervals = [i for i in alloc_state.addr_ivals(begin, end) if i.state is AddrIvalState.FREED]
         if intervals:
             self._sweep(addr_space.size, intervals)
         for ival in intervals:
@@ -359,9 +387,8 @@ class NaiveSweepingRevoker(BaseSweepingRevoker):
 
 
 class CompactingSweepingRevoker(BaseSweepingRevoker):
-    # XXX-LPT refactor private attribute access
     def reused(self, alloc_state, begin, end):
-        intervals = [i for i in alloc_state._addr_ivals if i.state is AddrIvalState.FREED]
+        intervals = [i for i in alloc_state.addr_ivals() if i.state is AddrIvalState.FREED]
         intervals.sort(reverse=True)
         intervals_coalesced = []
 
@@ -423,11 +450,88 @@ class GraphOutput(BaseOutput):
               alloc_state.mapd_size, alloc_state.allocd_size, revoker.swept), file=self._file)
 
 
+class AllocationMapOutput(BaseOutput, AllocatorAddrSpaceModelSubscriber):
+    POOL_MAX_ARTIFICIAL_GROWTH = 0x1000
+
+    POOL_MAP_RESOLUTION_IN_SYMBOLS = 60
+
+
+    def __init__(self, *args):
+        super().__init__(*args)
+        self._addr_ivals_reused = IntervalTree()
+
+
+    def reused(self, alloc_state, begin, end):
+        self._addr_ivals_reused.add(AddrIval(begin, end, None))
+
+
+    # XXX-LPT _print_header
+    #def _print_header(self)
+
+
+    @BaseOutput.rate_limited_runms(100)
+    def update(self):
+        pools = self._get_memory_pools()
+
+        print('---', file=self._file)
+        for p in pools:
+            psize = p.end - p.begin
+
+            chunk_size, rem = psize // AllocationMapOutput.POOL_MAP_RESOLUTION_IN_SYMBOLS,\
+                              psize % AllocationMapOutput.POOL_MAP_RESOLUTION_IN_SYMBOLS
+            chunk_size, rem = (chunk_size, rem) if chunk_size > 0 else (psize, 0)
+            chunk_offsets = itertools.chain(range(0, rem * (chunk_size+1), chunk_size+1),
+                                            range(rem * (chunk_size+1), psize, chunk_size))
+            chunks = [p.begin + co for co in chunk_offsets]
+            chunk_states = (self._chunk_state(cb, ce) for cb, ce in
+                            itertools.zip_longest(chunks, chunks[1:], fillvalue=p.end));
+            chunk_states_str = ''.join(chunk_states)
+            print('{0:x}-{1:x} {2:s} {3:d}'.format(p.begin, p.end, chunk_states_str, chunk_size), file=self._file)
+
+        self._addr_ivals_reused.clear()
+
+
+    @staticmethod
+    def _get_memory_pools():
+        ivals = [i for i in alloc_state.addr_ivals_coalesced_sorted() if i.state is not AddrIvalState.UNMAPD]
+        ivals.reverse()
+
+        pools = []
+        while ivals:
+            pool = []
+            pool.append(ivals.pop())
+            while ivals and (ivals[-1].begin - pool[-1].end < AllocationMapOutput.POOL_MAX_ARTIFICIAL_GROWTH):
+                assert pool[-1].end <= ivals[-1].begin, 'Bug: overlapping intervals {0} {1}'\
+                                                        .format(pool[-1], ivals[-1])
+                pool.append(ivals.pop())
+            pools.append(AddrIval(pool[0].begin, pool[-1].end, None))
+
+        return pools
+
+
+    def _chunk_state(self, cbegin, cend):
+        #print('{0:x}-{1:x}'.format(cbegin, cend), file=self._file)
+        csize = cend - cbegin
+        coverlaps = alloc_state.addr_ivals_coalesced_sorted(cbegin, cend)
+        if self._addr_ivals_reused.search(cbegin, cend):
+            chunk_stat = '~'   # 'reused'  (could be just partially)
+        elif all(i.state in (AddrIvalState.MAPD, AddrIvalState.UNMAPD,
+                              AddrIvalState.FREED, AddrIvalState.REVOKED) for i in coverlaps):
+            chunk_stat = '0'   # 'freed'
+        elif all((i.state is AddrIvalState.ALLOCD) for i in coverlaps) and\
+             sum((min(i.end, cend) - max(i.begin, cbegin)) for i in coverlaps) >= 0.80 * csize:
+            chunk_stat = '#'   # 'allocd'
+        else:
+            chunk_stat = '='   # 'fragmented'
+        return chunk_stat
+
+
 # Parse command line arguments
 argp = argparse.ArgumentParser(description='Model allocation from a trace and output various measurements')
 argp.add_argument("--log-level", help="Set the logging level",
                   choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL/default/"],
                   default="CRITICAL")
+argp.add_argument("--allocation-map-output", help="Output file for the allocation map (disabled by default)")
 argp.add_argument('revoker', choices=["NaiveSweepingRevoker/default/", "CompactingSweepingRevoker", "account"],
                   default='NaiveSweepingRevoker',
                   help="Select the revoker type, or 'account' to assume error-free trace and speed up the"
@@ -450,13 +554,20 @@ else:
     revoker = revoker_cls()
     alloc_state.register_subscriber(revoker)
 
+# Set up the output
 output = GraphOutput(sys.stdout)
+if args.allocation_map_output:
+    map_output_file = open(args.allocation_map_output, 'w')
+    alloc_map_output = AllocationMapOutput(map_output_file)
+    output = CompositeOutput(None, output, alloc_map_output)
+    alloc_state.register_subscriber(alloc_map_output)
 run = Run(sys.stdin,
           trace_listeners=[alloc_state, addr_space, revoker],
           addr_space_sample_listeners=[addr_space, ])
 run.replay()
 output.update()  # ensure at least one line of output
-
+if args.allocation_map_output:
+    map_output_file.close()
 '''
 print('----', file=sys.stdout)
 print('{0} swept {1}GB in {2} sweeps in a {3}s run trace\n'

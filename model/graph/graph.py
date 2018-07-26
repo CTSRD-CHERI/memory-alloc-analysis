@@ -30,6 +30,7 @@ plt.legend(['Aspace total', 'Aspace to sweep', 'Aspace of allocator', 'Allocd by
 plt.xlabel('Time (s)')
 plt.ylabel('Amount (mb)')
 plt.savefig('{0}-aspace_stats-vs-time.eps'.format(data0_label.lower()))
+plt.show()
 
 sys.exit()
 #sweep_per_ns = (data0[y4][1:] - data0[y4][:-1]) / (data0[x][1:] - data0[x][:-1])
