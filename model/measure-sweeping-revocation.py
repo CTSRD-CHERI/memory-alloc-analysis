@@ -379,21 +379,48 @@ class CompactingSweepingRevoker(BaseSweepingRevoker):
             alloc_state.revoked(ival.begin, ival.end)
 
 
-class Output:
-    def __init__(self):
-        self._update_last_ms = 0
-        self._update_period_ms = 100
+class BaseOutput:
+    def __init__(self, file):
+        self._file = file
+
+    def rate_limited_runms(call_period_ms):
+        def _rate_limited_ms(meth):
+            call_last_ms = 0
+            def rate_limited_meth(self, *args):
+                nonlocal call_last_ms
+                if call_last_ms == 0 or run.timestamp_ms - call_last_ms > call_period_ms:
+                    meth(self, *args)
+                    call_last_ms = run.timestamp_ms
+            return rate_limited_meth
+        return _rate_limited_ms
+
+    def update(self):
+        raise NotImplementedError
+
+
+class CompositeOutput(BaseOutput):
+    def __init__(self, file, *outputs):
+        super().__init__(file)
+        self._outputs = outputs
+
+    def update(self):
+        for o in self._outputs:
+            o.update()
+
+
+class GraphOutput(BaseOutput):
+    def __init__(self, file):
+        super().__init__(file)
         self._print_header()
 
     def _print_header(self):
         print('#{0}\t{1}\t{2}\t{3}\t{4}\t{5}'.format('timestamp', 'addr-space-total', 'addr-space-sweep',
-              'allocator-mapped', 'allocator-allocd', 'allocator-swept'), file=sys.stdout)
+              'allocator-mapped', 'allocator-allocd', 'allocator-swept'), file=self._file)
 
+    @BaseOutput.rate_limited_runms(100)
     def update(self):
-        if self._update_last_ms == 0 or run.timestamp_ms - self._update_last_ms > self._update_period_ms:
-            print('{0}\t{1}\t{2}\t{3}\t{4}\t{5}'.format(run.timestamp, addr_space.size, addr_space.sweep_size,
-                  alloc_state.mapd_size, alloc_state.allocd_size, revoker.swept), file=sys.stdout)
-            self._update_last_ms = run.timestamp_ms
+        print('{0}\t{1}\t{2}\t{3}\t{4}\t{5}'.format(run.timestamp, addr_space.size, addr_space.sweep_size,
+              alloc_state.mapd_size, alloc_state.allocd_size, revoker.swept), file=self._file)
 
 
 # Parse command line arguments
@@ -423,7 +450,7 @@ else:
     revoker = revoker_cls()
     alloc_state.register_subscriber(revoker)
 
-output = Output()
+output = GraphOutput(sys.stdout)
 run = Run(sys.stdin,
           trace_listeners=[alloc_state, addr_space, revoker],
           addr_space_sample_listeners=[addr_space, ])
