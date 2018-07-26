@@ -46,7 +46,7 @@ from common.misc import Publisher
 from common.run import Run
 
 @unique
-class AddrIntervalState(Enum):
+class AddrIvalState(Enum):
     ALLOCD  = 1
     FREED   = 2
     REVOKED = 3
@@ -57,7 +57,7 @@ class AddrIntervalState(Enum):
     __repr__ = Enum.__str__
 
 
-class AddrInterval(Interval):
+class AddrIval(Interval):
     __slots__ = ()
 
     def __new__(cls, begin, end, state):
@@ -104,7 +104,7 @@ def intervaltree_query_coalesced(tree, point, **kwds):
         end = ival_right.end
         ival_right = intervaltree_query_checked(tree, end)
 
-    return AddrInterval(begin, end, ival.data)
+    return AddrIval(begin, end, ival.data)
 
 
 
@@ -148,17 +148,17 @@ class BaseIntervalAddrSpaceModel(BaseAddrSpaceModel):
 
     def __init__(self, **kwds):
         super().__init__()
-        self.__addr_ivals = IntervalMap.from_valued_interval_domain(AddrInterval(0, 2**64, None))
+        self.__addr_ivals = IntervalMap.from_valued_interval_domain(AddrIval(0, 2**64, None))
 
     def _update(self, ival):
         overlaps = self.__addr_ivals[ival.begin-1 : ival.end+1]
         # XXX-LPT: use __init__ kwds.get('calc_amount_for_addr_ival_states', default=[])
-        mapd_size_old = sum(((i.end - i.begin) for i in overlaps if i.state is AddrIntervalState.MAPD))
-        allocd_size_old = sum(((i.end - i.begin) for i in overlaps if i.state is AddrIntervalState.ALLOCD))
+        mapd_size_old = sum(((i.end - i.begin) for i in overlaps if i.state is AddrIvalState.MAPD))
+        allocd_size_old = sum(((i.end - i.begin) for i in overlaps if i.state is AddrIvalState.ALLOCD))
         self.__addr_ivals.add(ival)
         overlaps = self.__addr_ivals[ival.begin-1 : ival.end+1]
-        mapd_size_new = sum(((i.end - i.begin) for i in overlaps if i.state is AddrIntervalState.MAPD))
-        allocd_size_new = sum(((i.end - i.begin) for i in overlaps if i.state is AddrIntervalState.ALLOCD))
+        mapd_size_new = sum(((i.end - i.begin) for i in overlaps if i.state is AddrIvalState.MAPD))
+        allocd_size_new = sum(((i.end - i.begin) for i in overlaps if i.state is AddrIvalState.ALLOCD))
 
         self.mapd_size += mapd_size_new - mapd_size_old
         self.allocd_size += allocd_size_new - allocd_size_old
@@ -175,10 +175,10 @@ class AllocatorAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
 
 
     def allocd(self, begin, end):
-        interval = AddrInterval(begin, end, AddrIntervalState.ALLOCD)
+        interval = AddrIval(begin, end, AddrIvalState.ALLOCD)
         overlaps = self._addr_ivals[begin:end]
-        overlaps_allocd = [o for o in overlaps if o.state is AddrIntervalState.ALLOCD]
-        overlaps_freed = [o for o in overlaps if o.state is AddrIntervalState.FREED]
+        overlaps_allocd = [o for o in overlaps if o.state is AddrIvalState.ALLOCD]
+        overlaps_freed = [o for o in overlaps if o.state is AddrIvalState.FREED]
         if overlaps_allocd:
             logger.error('%d\tE: New allocation %s overlaps existing allocations %s, chopping them out',
                  run.timestamp, interval, overlaps_allocd)
@@ -205,19 +205,19 @@ class AllocatorAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
                   run.timestamp, begin_old)
             self.allocd(begin_new, end_new)
             return
-        if interval_old.state is not AddrIntervalState.ALLOCD:
+        if interval_old.state is not AddrIvalState.ALLOCD:
             logger.error('%d\tE: Realloc of non-allocated interval %s, assuming it is allocated',
                   run.timestamp, interval_old)
 
         # Free the old allocation, just the part that does not overlap the new allocation
-        interval_new = AddrInterval(begin_new, end_new, AddrIntervalState.ALLOCD)
+        interval_new = AddrIval(begin_new, end_new, AddrIvalState.ALLOCD)
         if interval_new.overlaps(interval_old):
-            super()._update(AddrInterval(interval_old.begin, interval_old.end, AddrIntervalState.FREED))
+            super()._update(AddrIval(interval_old.begin, interval_old.end, AddrIvalState.FREED))
             self._addr_ivals.remove(interval_old)
             if interval_new.lt(interval_old):
-                self._addr_ivals.add(AddrInterval(interval_new.end, interval_old.end, AddrIntervalState.FREED))
+                self._addr_ivals.add(AddrIval(interval_new.end, interval_old.end, AddrIvalState.FREED))
             if interval_new.gt(interval_old):
-                self._addr_ivals.add(AddrInterval(interval_old.begin, interval_new.begin, AddrIntervalState.FREED))
+                self._addr_ivals.add(AddrIval(interval_old.begin, interval_new.begin, AddrIvalState.FREED))
         else:
             self.freed(begin_old)
 
@@ -228,13 +228,13 @@ class AllocatorAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
         interval = intervaltree_query_checked(self._addr_ivals, begin)
         if interval:
             self._addr_ivals.remove(interval)
-            if begin != interval.begin or interval.state is not AddrIntervalState.ALLOCD:
+            if begin != interval.begin or interval.state is not AddrIvalState.ALLOCD:
                 logger.warning('%d\tW: Freed(%x) misfrees %s', run.timestamp, begin, interval)
-            interval = AddrInterval(interval.begin, interval.end, AddrIntervalState.FREED)
+            interval = AddrIval(interval.begin, interval.end, AddrIvalState.FREED)
         else:
             logger.warning('%d\tW: No existing allocation to free at %x, defaulting to one of size 1',
                   run.timestamp, begin)
-            interval = AddrInterval(begin, begin + 1, AddrIntervalState.FREED)
+            interval = AddrIval(begin, begin + 1, AddrIvalState.FREED)
         super()._update(interval)
         self._addr_ivals.add(interval)
 
@@ -244,14 +244,14 @@ class AllocatorAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
             bes = [(bes[0], bes[1])]
         err_str = ''
         for begin, end in bes:
-            ivals_allocd = [ival for ival in self._addr_ivals[begin:end] if ival.state is AddrIntervalState.ALLOCD]
+            ivals_allocd = [ival for ival in self._addr_ivals[begin:end] if ival.state is AddrIvalState.ALLOCD]
             if ivals_allocd:
                 err_str += 'Bug: revoking address intervals between {0:x}-{1:x} that are still allocated {2}\n'\
                            .format(begin, end, ivals_allocd)
         assert not err_str, err_str
 
         for begin, end in bes:
-            ival = AddrInterval(begin, end, AddrIntervalState.REVOKED)
+            ival = AddrIval(begin, end, AddrIvalState.REVOKED)
             super()._update(ival)
             self._addr_ivals.chop(ival.begin, ival.end)
             self._addr_ivals.add(ival)
@@ -259,17 +259,17 @@ class AllocatorAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
     # Mapped/unmapped by the allocator for its own use
     def mapd(self, callstack, begin, end):
         if any((callstack.find(frame) >= 0 for frame in ('malloc', 'calloc', 'realloc', 'free'))):
-            self._update(AddrInterval(begin, end, AddrIntervalState.MAPD))
+            self._update(AddrIval(begin, end, AddrIvalState.MAPD))
     def unmapd(self, callstack, begin, end):
-        self._update(AddrInterval(begin, end, AddrIntervalState.UNMAPD))
+        self._update(AddrIval(begin, end, AddrIvalState.UNMAPD))
 
 
 class AddrSpaceModel(BaseIntervalAddrSpaceModel):
     def mapd(self, _, begin, end):
-        self._update(AddrInterval(begin, end, AddrIntervalState.MAPD))
+        self._update(AddrIval(begin, end, AddrIvalState.MAPD))
 
     def unmapd(self, _, begin, end):
-        self._update(AddrInterval(begin, end, AddrIntervalState.UNMAPD))
+        self._update(AddrIval(begin, end, AddrIvalState.UNMAPD))
 
 class AccountingAddrSpaceModel(BaseAddrSpaceModel):
     def __init__(self):
@@ -315,7 +315,7 @@ class BaseSweepingRevoker(AllocationStateSubscriber):
 
 
     def revoked(self, *bes):
-        self._sweep(addr_space.size, [AddrInterval(b, e, AddrIntervalState.FREED) for b, e in bes])
+        self._sweep(addr_space.size, [AddrIval(b, e, AddrIvalState.FREED) for b, e in bes])
 
 
     # XXX-LPT: pack into sweeps of L addr_ivals, where L is an imposed limit
@@ -324,7 +324,7 @@ class BaseSweepingRevoker(AllocationStateSubscriber):
             raise ValuError('{0} exceeds the limit for intervals at once ({1})'
                             .format(len(addr_ivals), self._capacity_ivals))
 
-        # XXX: can I format AddrInterval like [x+mb]
+        # XXX: can I format AddrIval like [x+mb]
         #ts_str = '{0:>' + str(len(str(run.timestamp))) + '}'
         #if hasattr(self, '_ns_last_print'):
         #    delta_ns = run.timestamp_ns - self._ns_last_print
@@ -351,7 +351,7 @@ class BaseSweepingRevoker(AllocationStateSubscriber):
 class NaiveSweepingRevoker(BaseSweepingRevoker):
     # XXX-LPT refactor private attribute access
     def reused(self, alloc_state, begin, end):
-        intervals = [i for i in alloc_state._addr_ivals[begin:end] if i.state is AddrIntervalState.FREED]
+        intervals = [i for i in alloc_state._addr_ivals[begin:end] if i.state is AddrIvalState.FREED]
         if intervals:
             self._sweep(addr_space.size, intervals)
         for ival in intervals:
@@ -361,13 +361,13 @@ class NaiveSweepingRevoker(BaseSweepingRevoker):
 class CompactingSweepingRevoker(BaseSweepingRevoker):
     # XXX-LPT refactor private attribute access
     def reused(self, alloc_state, begin, end):
-        intervals = [i for i in alloc_state._addr_ivals if i.state is AddrIntervalState.FREED]
+        intervals = [i for i in alloc_state._addr_ivals if i.state is AddrIvalState.FREED]
         intervals.sort(reverse=True)
         intervals_coalesced = []
 
         while intervals:
             ival = intervaltree_query_coalesced(alloc_state._addr_ivals, intervals.pop().begin,
-                                                coalesce_with={AddrIntervalState.REVOKED})
+                                                coalesce_with={AddrIvalState.REVOKED})
             intervals_coalesced.append(ival)
             while intervals and ival.end >= intervals[-1].begin:
                 assert ival.end > intervals[-1].begin, '{0} failed to coalesce with {1}'.format(ival, intervals[-1])
