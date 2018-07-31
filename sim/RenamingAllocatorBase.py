@@ -72,6 +72,9 @@ class RenamingAllocatorBase (Publisher):
   def size_measured(self, sz):
     self._publish('size_measured', sz)
 
+  def sweep_size_measured(self, sz):
+    self._publish('sweep_size_measured', sz)
+
   # These are hard to pass through, so don't.  In particular, the trace
   # VAs are not linear in the emulated VA space, so a single map block
   # would translate to many spans in the emulated space.  Since, to first

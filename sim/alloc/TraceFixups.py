@@ -221,6 +221,9 @@ class Allocator(Publisher):
   def size_measured(self, sz):
     self._publish('size_measured', sz)
 
+  def sweep_size_measured(self, sz):
+    self._publish('sweep_size_measured', sz)
+
 # --------------------------------------------------------------------- }}}
 
 # vim: set foldmethod=marker:foldmarker={{{,}}}

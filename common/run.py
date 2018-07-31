@@ -134,6 +134,7 @@ class Unrun:
     def __init__(self, tslam, out=sys.stdout):
         self._tslam = tslam
         self._out = out
+        self._last_measured_size = None
 
     def allocd(self, publ, begin, end):
         # XXX: call stack not plumbed through yet
@@ -157,5 +158,10 @@ class Unrun:
     def revoked(self, publ, spans):
         print("%d\t\trevoke\t%s\t" % (self._tslam(), " ".join(map(str,itertools.chain.from_iterable([[b,e] for (b,e) in spans])))))
 
+    # These are packed onto one line, so cache them in the order generated
+    # by Run.
     def size_measured(self, publ, size):
-        print("%d\t%d" % (self._tslam(), size))
+        self._last_measured_size = size
+
+    def sweep_size_measured(self, publ, size):
+        print("%d\t%d\t%d" % (self._tslam(), self._last_measured_size, size))
