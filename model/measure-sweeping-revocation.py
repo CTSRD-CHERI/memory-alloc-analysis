@@ -114,7 +114,6 @@ class BaseAddrSpaceModel:
         self.sweep_size = 0
         self.mapd_size = 0
         self.allocd_size = 0
-        self.__addr_ivals = IntervalMap.from_valued_interval_domain(AddrInterval(0, 2**64, None))
 
     @property
     def size_kb(self):
@@ -145,6 +144,11 @@ class BaseAddrSpaceModel:
     def sweep_size_measured(self, sweep_size):
         self.sweep_size = sweep_size
 
+class BaseIntervalAddrSpaceModel(BaseAddrSpaceModel):
+
+    def __init__(self, **kwds):
+        super().__init__()
+        self.__addr_ivals = IntervalMap.from_valued_interval_domain(AddrInterval(0, 2**64, None))
 
     def _update(self, ival):
         overlaps = self.__addr_ivals[ival.begin-1 : ival.end+1]
@@ -163,7 +167,7 @@ class BaseAddrSpaceModel:
         #      .format(run.timestamp, ival, mapd_size_old, mapd_size_new, self.mapd_size), file=sys.stderr)
 
 
-class AllocatorAddrSpaceModel(BaseAddrSpaceModel, Publisher):
+class AllocatorAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
     def __init__(self):
         super().__init__()
         self._addr_ivals = IntervalTree()
@@ -254,13 +258,35 @@ class AllocatorAddrSpaceModel(BaseAddrSpaceModel, Publisher):
             self._addr_ivals.add(ival)
 
 
-class AddrSpaceModel(BaseAddrSpaceModel):
+class AddrSpaceModel(BaseIntervalAddrSpaceModel):
     def mapd(self, begin, end):
         self._update(AddrInterval(begin, end, AddrIntervalState.MAPD))
 
     def unmapd(self, begin, end):
         self._update(AddrInterval(begin, end, AddrIntervalState.UNMAPD))
 
+class AccountingAddrSpaceModel(BaseAddrSpaceModel):
+    def __init__(self):
+        super().__init__()
+        self._va2sz = {}
+
+    def mapd(self, begin, end):
+        self.mapd_size += end - begin
+    def unmapd(self, begin, end):
+        self.mapd_size -= end - begin
+
+    def allocd(self, begin, end):
+        sz = end - begin
+        self._va2sz[begin] = sz
+        self.allocd_size += sz
+    def freed(self, begin):
+        sz = self._va2sz.get(begin)
+        if sz is not None :
+            self.allocd_size -= sz
+            del self._va2sz[begin]
+    def reallocd(self, obegin, nbegin, nend):
+        self.freed(obegin)
+        self.allocd(nbegin, nend)
 
 class AllocationStateSubscriber:
     def reused(self, alloc_state, begin, end):
@@ -268,11 +294,10 @@ class AllocationStateSubscriber:
 
 
 class BaseSweepingRevoker(AllocationStateSubscriber):
-    def __init__(self, capacity_ivals=2**64):
+    def __init__(self):
         super().__init__()
         self.swept = 0
         self.sweeps = []
-        self._capacity_ivals = int(capacity_ivals)
 
 
     @property
@@ -283,17 +308,7 @@ class BaseSweepingRevoker(AllocationStateSubscriber):
     def swept_gb(self):
         return self.swept // 2**30
 
-
-    def revoked(self, *bes):
-        self._sweep(addr_space.size, [AddrInterval(b, e, AddrIntervalState.FREED) for b, e in bes])
-
-
-    # XXX-LPT: pack into sweeps of L addr_ivals, where L is an imposed limit
-    def _sweep(self, amount, addr_ivals):
-        if len(addr_ivals) > self._capacity_ivals:
-            raise ValuError('{0} exceeds the limit for intervals at once ({1})'
-                            .format(len(addr_ivals), self._capacity_ivals))
-
+    def _sweep(self, amount):
         # XXX: can I format AddrInterval like [x+mb]
         ts_str = '{0:>' + str(len(str(run.timestamp))) + '}'
         if hasattr(self, '_ns_last_print'):
@@ -309,16 +324,40 @@ class BaseSweepingRevoker(AllocationStateSubscriber):
             ts_str = ts_str.format('+' + delta_str)
         else:
             ts_str = ts_str.format(run.timestamp)
-        #print('{0}\tSweep {1:d}MB revoking references to {2} intervals'.format(ts_str, amount // 2**20, addr_ivals),
-        #      file=sys.stdout)
         print_update()
         self._ns_last_print = run.timestamp_ns
 
         self.swept += amount
         self.sweeps.append((run.timestamp_ns, amount))
 
+class AccountingRevoker(BaseSweepingRevoker):
+    def __init__(self, capacity_ivals=2**64):
+        super().__init__()
 
-class NaiveSweepingRevoker(BaseSweepingRevoker):
+    def revoked(self, *bes):
+        self._sweep(addr_space.size)
+
+class BaseIntervalSweepingRevoker(BaseSweepingRevoker):
+
+    def __init__(self, capacity_ivals=2**64):
+        super().__init__()
+        self._capacity_ivals = int(capacity_ivals)
+
+    def revoked(self, *bes):
+        self._sweep(addr_space.size, [AddrInterval(b, e, AddrIntervalState.FREED) for b, e in bes])
+
+    # XXX-LPT: pack into sweeps of L addr_ivals, where L is an imposed limit
+    def _sweep(self, amount, addr_ivals):
+        if len(addr_ivals) > self._capacity_ivals:
+            raise ValuError('{0} exceeds the limit for intervals at once ({1})'
+                            .format(len(addr_ivals), self._capacity_ivals))
+
+        #print('{0}\tSweep {1:d}MB revoking references to {2} intervals'.format(ts_str, amount // 2**20, addr_ivals),
+        #      file=sys.stdout)
+
+        super(BaseIntervalSweepingRevoker, self)._sweep(amount)
+
+class NaiveSweepingRevoker(BaseIntervalSweepingRevoker):
     # XXX-LPT refactor private attribute access
     def reused(self, alloc_state, begin, end):
         intervals = [i for i in alloc_state._addr_ivals[begin:end] if i.state is AddrIntervalState.FREED]
@@ -328,7 +367,7 @@ class NaiveSweepingRevoker(BaseSweepingRevoker):
             alloc_state.revoked(ival.begin, ival.end)
 
 
-class CompactingSweepingRevoker(BaseSweepingRevoker):
+class CompactingSweepingRevoker(BaseIntervalSweepingRevoker):
     # XXX-LPT refactor private attribute access
     def reused(self, alloc_state, begin, end):
         intervals = [i for i in alloc_state._addr_ivals if i.state is AddrIntervalState.FREED]
@@ -355,11 +394,16 @@ def print_update():
 print('#{0}\t{1}\t{2}\t{3}\t{4}\t{5}'.format('timestamp', 'addr-space-total', 'addr-space-sweep',
       'addr-space-mapped', 'allocator-allocd', 'allocator-swept'), file=sys.stdout)
 
-alloc_state = AllocatorAddrSpaceModel()
-addr_space = AddrSpaceModel()
-revoker_cls = globals()[sys.argv[1]]
-revoker = revoker_cls(*sys.argv[2:])
-alloc_state.register_subscriber(revoker)
+if sys.argv[1] == "account":
+    alloc_state = AccountingAddrSpaceModel()
+    addr_space = AccountingAddrSpaceModel()
+    revoker = AccountingRevoker()
+else :
+    alloc_state = AllocatorAddrSpaceModel()
+    addr_space = AddrSpaceModel()
+    revoker_cls = globals()[sys.argv[1]]
+    revoker = revoker_cls(*sys.argv[2:])
+    alloc_state.register_subscriber(revoker)
 
 run = Run(sys.stdin,
           trace_listeners=[alloc_state, addr_space, revoker],
