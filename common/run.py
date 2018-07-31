@@ -156,7 +156,8 @@ class Unrun:
         print("%d\t---\tmunmap\t%x %d\t" % (self._tslam(), begin, end - begin))
 
     def revoked(self, publ, spans):
-        print("%d\t\trevoke\t%s\t" % (self._tslam(), " ".join(map(str,itertools.chain.from_iterable([[b,e] for (b,e) in spans])))))
+        print("%d\t\trevoke\t%s\t" % (self._tslam(),
+            " ".join(["%x %x" % be for be in spans])))
 
     # These are packed onto one line, so cache them in the order generated
     # by Run.
