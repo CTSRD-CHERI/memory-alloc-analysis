@@ -32,7 +32,7 @@ argp.add_argument("--log-level", help="Set the logging level",
 # same file descriptor, things would work out.  However, because we can't
 # (can't? easily?) do that, we can just assign one to the other so they
 # share a single buffer and underlying fd.  In particular, we assign
-# sys.stderr to sys.stdout, so that all output emerges on fd 1.
+# sys.stderr to be sys.stdout, so that all output emerges on fd 1.
 argp.add_argument('--stdouterr', help='Equate sys.stdout and sys.stderr',
                   action='store_const', const=True, default=False)
 

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # Copyright (c) 2018  Lucian Paul-Trifu
 # All rights reserved.
-# 
+#
 # This software was developed by SRI International and the University of
 # Cambridge Computer Laboratory under DARPA/AFRL contract (FA8750-10-C-0237)
 # ("CTSRD"), as part of the DARPA CRASH research programme.
-# 
+#
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
 # are met:
@@ -14,7 +14,7 @@
 # 2. Redistributions in binary form must reproduce the above copyright
 #    notice, this list of conditions and the following disclaimer in the
 #    documentation and/or other materials provided with the distribution.
-# 
+#
 # THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
 # ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
 # IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
@@ -64,7 +64,7 @@ class AddrInterval(Interval):
     @property
     def state(self):
         return self.data
-    # Required for compatibility with the IntervalMap  
+    # Required for compatibility with the IntervalMap
     @property
     def value(self):
         return self.state
@@ -136,10 +136,8 @@ class BaseAddrSpaceModel:
     def mapd_size_mb(self):
         return self.mapd_size // 2**20
 
-
     def size_measured(self, size):
         self.size = size
-
 
     def sweep_size_measured(self, sweep_size):
         self.sweep_size = sweep_size
@@ -292,13 +290,11 @@ class AllocationStateSubscriber:
     def reused(self, alloc_state, begin, end):
         raise NotImplemented
 
-
 class BaseSweepingRevoker(AllocationStateSubscriber):
     def __init__(self):
         super().__init__()
         self.swept = 0
         self.sweeps = []
-
 
     @property
     def swept_mb(self):
@@ -314,7 +310,7 @@ class BaseSweepingRevoker(AllocationStateSubscriber):
         if hasattr(self, '_ns_last_print'):
             delta_ns = run.timestamp_ns - self._ns_last_print
             if delta_ns > 10**9:
-                delta_str = str(delta_ns // 10**9) + 's' 
+                delta_str = str(delta_ns // 10**9) + 's'
             elif delta_ns > 10**6:
                 delta_str = str(delta_ns // 10**6) + 'ms'
             elif delta_ns > 10**3:
