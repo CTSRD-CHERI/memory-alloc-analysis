@@ -384,7 +384,7 @@ class Allocator(RenamingAllocatorBase):
 
       assert spanst == BuckSt.WAIT, \
         ("Freeing large span in incorrect state", sz, spanst, bix, b, self._state_diag())
-      assert bix + bsz <= spanbase + spansize, \
+      assert spanbase <= bix and bix + bsz <= spanbase + spansize, \
         "Mismatched bucket states of large allocation"
 
       self._njunkb += bsz
