@@ -15,10 +15,6 @@ from common.intervalmap import IntervalMap
 from common.misc import Publisher
 from sim.RenamingAllocatorBase import RenamingAllocatorBase
 
-# Power of two, greater than page log
-bucklog = 16
-pagelog = 12
-
 # Various symbolic names for paranoia levels
 PARANOIA_STATE_ON_REVOKE=0
 PARANOIA_STATE_PER_OPER=1
@@ -78,46 +74,17 @@ class BuckSt(Enum):
 #   revocations)
 
 # --------------------------------------------------------------------- }}}
-# Size-related utility functions -------------------------------------- {{{
-def _szfix(sz):
-  assert sz <= 2**(bucklog-1)
-
-  if sz <= 16 : return 16
-
-  # XXX
-  # At 1/4 linear separation between successive powers of two, we
-  # are only guaranteed 16/4 = 4 byte alignment of objects.  If we
-  # really want to get down to it, we could try doing something more
-  # clever here or we could enforce that we always allocate objects
-  # with size max(requested_size, alignment*4).
-  bl = sz.bit_length() - 1
-  fl = 1 << bl
-
-  d = sz - fl
-  if d == 0 : return sz
-
-  cl = fl << 1
-  assert fl <= sz < cl
-
-  if d <= (fl >> 1) :
-    if d <= (fl >> 2) :   return fl + (fl >> 2)
-    else:         return fl + (fl >> 1)
-  elif d <= 3 * (fl >> 2) : return fl + 3 * (fl >> 2)
-  return cl
-
-def _issmall(sz) : return sz <= 2**(bucklog-1)
-def _maxoix(sz) : return int((2 ** bucklog) / _szfix(sz))
-
-# --------------------------------------------------------------------- }}}
 
 class Allocator(RenamingAllocatorBase):
 # Initialization ------------------------------------------------------ {{{
   __slots__ = (
         '_bix2state',
         '_bix2szbm',
+        '_bucklog',
         '_maxbix',
         '_njunkb',
         '_overhead_factor',
+        '_pagelog',
         '_paranoia',
         '_revoke_k',
         '_sz2bixp')
@@ -150,12 +117,63 @@ class Allocator(RenamingAllocatorBase):
         self._try_realloc = self._try_realloc_yes
 # --------------------------------------------------------------------- }}}
 
+    # Power of two, greater than page log
+    self._bucklog = 16
+    self._pagelog = 12
+
     self._tva2eva = {}  # Object map
     self._maxbix = 0    # Next never-touched bucket index
     self._sz2bixp = {}  # BUMP buckets and allocation pointer, by size
     self._bix2szbm = {} # BUMP and WAIT buckets' size and bitmaps
     self._njunkb = 0    # Number of buckets in JUNK state
-    self._bix2state = IntervalMap(0, 2**(64 - bucklog), BuckSt.AHWM)
+    self._bix2state = IntervalMap(0, 2**(64 - self._bucklog), BuckSt.AHWM)
+# --------------------------------------------------------------------- }}}
+# Size-related utility functions -------------------------------------- {{{
+
+  def _issmall(self, sz): return sz <= 2**(self._bucklog-1)
+
+  # Find the right size bucket for a small request.  Starting from 16, we
+  # divide the gap between successive powers of two into four regions and map
+  # objects into the smallest one larger than their size.  The size sequence,
+  # specifically, begins 16 20 24 28 32 40 48 56 64 80 96 112 128 .  We
+  # consider only objects smaller than half a bucket (i.e. 2**bucklog bytes)
+  # to be "small"; this is captured by _issmall(), above.
+  def _szfix(self, sz):
+    assert self._issmall(sz)
+
+    if sz <= 16 : return 16
+
+    # XXX
+    # At 1/4 linear separation between successive powers of two, we
+    # are only guaranteed 16/4 = 4 byte alignment of objects.  If we
+    # really want to get down to it, we could try doing something more
+    # clever here or we could enforce that we always allocate objects
+    # with size max(requested_size, alignment*4).
+    bl = sz.bit_length() - 1
+    fl = 1 << bl
+
+    d = sz - fl
+    if d == 0 : return sz
+
+    cl = fl << 1
+    assert fl <= sz < cl
+
+    if d <= (fl >> 1):
+      if d <= (fl >> 2) :     return fl + (fl >> 2)
+      else :                  return fl + (fl >> 1)
+    elif d <= 3 * (fl >> 2) : return fl + 3 * (fl >> 2)
+    return cl
+
+  def _maxoix(self, sz):
+    return int((2 ** self._bucklog) / self._szfix(sz))
+
+  def _bix2va(self, bix) : return bix << self._bucklog
+  def _va2bix(self, va)  : return va  >> self._bucklog
+
+  def _sz2nbucks(self, sz):
+    return int((sz + 2**self._bucklog - 1) >> self._bucklog)
+  def _nbucks2sz(self, bs) : return bs << self._bucklog
+
 # --------------------------------------------------------------------- }}}
 # Additional state assertions and diagnostics ------------------------- {{{
 
@@ -167,7 +185,7 @@ class Allocator(RenamingAllocatorBase):
 
     # Ensure that our _maxbix looks like the HWM
     (mbase, msz, mv) = self._bix2state[self._maxbix]
-    assert mbase + msz == 2**(64 - bucklog), ("maxbix not max", self._maxbix, mbase, msz, mv)
+    assert mbase + msz == 2**(64 - self._bucklog), ("maxbix not max", self._maxbix, mbase, msz, mv)
     assert mv == BuckSt.AHWM, ("maxbix not AHWM", self._maxbix, mbase, msz, mv)
 
     # Check that our running sum of JUNK pages is correct
@@ -192,7 +210,7 @@ class Allocator(RenamingAllocatorBase):
             assert self._bix2szbm.get(bc) is not None, \
                 ("B/W miss", bc, self._state_diag())
             (bsz, _) = self._bix2szbm[bc]
-            bc += (bsz + 2**bucklog - 1) >> bucklog
+            bc += self._sz2nbucks(bsz)
 
     # Every currently-active BUMP bucket is tagged as such, yes?
     for sz in self._sz2bixp :
@@ -251,7 +269,8 @@ class Allocator(RenamingAllocatorBase):
             self._njunkb -= brs[2]
             self._bix2state.mark(brs[0],brs[1],BuckSt.TIDY)
 
-        brss = [(bix << bucklog, (bix+sz) << bucklog) for (bix, sz, _) in brss]
+        brss = [(self._bix2va(bix), self._bix2va(bix+sz))
+                for (bix, sz, _) in brss]
         self._publish('revoked', brss)
 
 # --------------------------------------------------------------------- }}}
@@ -280,16 +299,16 @@ class Allocator(RenamingAllocatorBase):
     logging.debug(">_alloc sz=%d", sz)
     if self._paranoia > PARANOIA_STATE_PER_OPER : self._state_asserts()
 
-    if _issmall(sz) :
+    if self._issmall(sz) :
       # Is small allocation
 
       # Is bump bucket available?
-      sz = _szfix(sz)
+      sz = self._szfix(sz)
       bb = self._sz2bixp.get(sz)
       if bb is None :
         # No, conjure one up and MAP it
         bbix = self._locnew(1, BuckSt.BUMP)
-        self._publish('mapd', bbix << bucklog, (bbix+1) << bucklog)
+        self._publish('mapd', self._bix2va(bbix), self._bix2va(bbix+1))
 
         # Register its size and bitmap
         self._bix2szbm[bbix] = (sz, 0)
@@ -304,23 +323,23 @@ class Allocator(RenamingAllocatorBase):
       assert bbbm & (1 << bbap) == 0, "Attempting to BUMP into free object"
 
       bbap += 1
-      if bbap == _maxoix(sz) :
+      if bbap == self._maxoix(sz) :
         # out of room; can't bump this any more
         del self._sz2bixp[sz]
         self._bix2state.mark(bbix, 1, BuckSt.WAIT)
       else :
-        assert bbap < _maxoix(sz), "Allocation pointer beyond maximum"
+        assert bbap < self._maxoix(sz), "Allocation pointer beyond maximum"
         # just revise allocation pointer
         self._sz2bixp[sz] = (bbix, bbap)
 
-      res = (bbix << bucklog) + (bbap-1)*sz
+      res = self._bix2va(bbix) + (bbap-1)*sz
     else :
       # Large allocation.  Immediately acquire, MAP, and enroll in WAIT state
-      bsz = int((sz + 2**bucklog - 1) >> bucklog)
+      bsz = self._sz2nbucks(sz)
       bbix = self._locnew(bsz, BuckSt.WAIT)
       self._bix2szbm[bbix] = (sz, 0)
-      res = bbix << bucklog
-      self._publish('mapd', res, res + (bsz << bucklog))
+      res = self._bix2va(bbix)
+      self._publish('mapd', res, res + self._nbucks2sz(bsz))
 
     logging.debug("<_alloc eva=%x", res)
     return res
@@ -333,7 +352,7 @@ class Allocator(RenamingAllocatorBase):
     if self._paranoia > PARANOIA_STATE_PER_OPER : self._state_asserts()
 
     # Look up existing allocation
-    bix = eva >> bucklog
+    bix = self._va2bix(eva)
     b   = self._bix2szbm[bix]
 
     # Sanity check state
@@ -342,9 +361,9 @@ class Allocator(RenamingAllocatorBase):
       "Attempting to free in non-BUMP/WAIT bucket"
 
     (sz, bbm) = b
-    if _issmall(sz) :
+    if self._issmall(sz) :
       # Small allocation.  Set bit in bitmask.
-      boff = eva - (bix << bucklog)
+      boff = eva - self._bix2va(bix)
       assert boff % sz == 0, "Nonzero phase in small bucket"
       bitix = int(boff / sz)
       bitm  = 1 << bitix
@@ -358,7 +377,7 @@ class Allocator(RenamingAllocatorBase):
         assert bitix < bbap, ("Free in BUMP bucket beyond alloc ptr", \
             sz, bix, bitix, bbap)
 
-      if bbm == (1 << _maxoix(sz)) - 1 :
+      if bbm == (1 << self._maxoix(sz)) - 1 :
         # All objects now free; move bucket state
         assert self._sz2bixp.get(sz) is None or self._sz2bixp[sz][0] != bix, \
           ("Freeing bucket still registered as bump block", \
@@ -371,7 +390,7 @@ class Allocator(RenamingAllocatorBase):
         # XXX At the moment, we only unmap when the entire bucket is free.
         # This is just nwf being lazy and not wanting to do the bit math for
         # page-at-a-time release.
-        self._publish('unmapd', bix << bucklog, (bix+1) << bucklog)
+        self._publish('unmapd', self._bix2va(bix), self._bix2va(bix+1))
 
         self._try_revoke()
       else :
@@ -379,17 +398,18 @@ class Allocator(RenamingAllocatorBase):
         self._bix2szbm[bix] = (sz, bbm)
     else :
       # Large allocation, retire all blocks to JUNK, UNMAP, and maybe revoke
-      bsz = int((sz + 2**bucklog - 1) >> bucklog)
-      del self._bix2szbm[bix]
+      bsz = self._sz2nbucks(sz)
 
       assert spanst == BuckSt.WAIT, \
         ("Freeing large span in incorrect state", sz, spanst, bix, b, self._state_diag())
       assert spanbase <= bix and bix + bsz <= spanbase + spansize, \
         "Mismatched bucket states of large allocation"
 
+      del self._bix2szbm[bix]
+
       self._njunkb += bsz
       self._bix2state.mark(bix, bsz, BuckSt.JUNK)
-      self._publish('unmapd', bix << bucklog, (bix+bsz) << bucklog)
+      self._publish('unmapd', self._bix2va(bix), self._bix2va(bix+bsz))
       self._try_revoke()
     logging.debug("<_free eva=%x", eva)
 
@@ -409,7 +429,7 @@ class Allocator(RenamingAllocatorBase):
     if self._paranoia > PARANOIA_STATE_PER_OPER : self._state_asserts()
 
     # Find the size of the existing allocation
-    bix = oeva >> bucklog
+    bix = self._va2bix(oeva)
     b   = self._bix2szbm[bix]
 
     # Sanity check state
@@ -425,36 +445,37 @@ class Allocator(RenamingAllocatorBase):
       # Don't update the block size
       return True
 
-    if _issmall(osz) :
+    if self._issmall(osz) :
       logging.debug("<_try_realloc small eva=%x", oeva)
       # Small allocation not growing by much.
-      return _issmall(nsz) and _szfix(nsz) == osz
+      return self._issmall(nsz) and self._szfix(nsz) == osz
       # Unfortunately, even if the next small piece is free, we couldn't
       # use it, because we'd then be waiting for a free() that never came
 
     # Large allocation getting larger.  If not much larger...
-    if nsz <= ((osz + 2**bucklog - 1) >> bucklog) << bucklog :
+    if nsz <= self._nbucks2sz(self._sz2nbucks(osz)) :
       logging.debug("<_try_realloc sm enlarging eva=%x (bix=%d) osz=%d nsz=%d %s", \
-          bix << bucklog, bix, osz, nsz, self._state_diag())
+          self._bix2va(bix), bix, osz, nsz, self._state_diag())
       self._bix2szbm[bix] = (nsz, 0)
       return True
 
     # It might happen that we have enough free spans ahead of us that we can
     # just gobble them.
-    (nextbase, nextsize, nextst) = self._bix2state.get(bix+(osz >> bucklog))
+    eix = bix + self._sz2nbucks(osz)
+
+    (nextbase, nextsize, nextst) = self._bix2state.get(eix)
     if nextst not in { BuckSt.TIDY, BuckSt.AHWM } :
       logging.debug("<_try_realloc up against %s at eva=%x", nextst, oeva)
       return False
 
-    if nsz <= osz + (nextsize << bucklog) :
+    if nsz <= osz + self._nbucks2sz(nextsize) :
       logging.debug("<_try_realloc enlarging eva=%x osz=%d nsz=%d", \
-          bix << bucklog, osz, nsz)
+          self._bix2va(bix), osz, nsz)
       self._bix2szbm[bix] = (nsz, 0)
-      self._bix2state.mark(bix+(osz >> bucklog),
-                           (nsz - osz + 2**bucklog - 1) >> bucklog,
-                           BuckSt.WAIT)
-      self._publish('mapd', (bix+(osz >> bucklog)) << bucklog, \
-                  (bix + ((nsz + 2 **bucklog -1) >> bucklog)) << bucklog)
+      self._bix2state.mark(eix, self._sz2nbucks(nsz - osz), BuckSt.WAIT)
+      self._publish('mapd',
+                    self._nbucks2sz(bix + self._sz2nbucks(osz)), \
+                    self._nbucks2sz(bix + self._sz2nbucks(nsz)))
       return True
 
     return False
@@ -463,7 +484,7 @@ class Allocator(RenamingAllocatorBase):
     if self._paranoia > PARANOIA_STATE_PER_OPER : self._state_asserts()
 
     # Find the size of the existing allocation
-    bix = oeva >> bucklog
+    bix = self._va2bix(oeva)
     b   = self._bix2szbm[bix]
     # Sanity check state
     (spanbase, spansize, spanst) = self._bix2state.get(bix)
