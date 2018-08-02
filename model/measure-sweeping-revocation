@@ -4,4 +4,4 @@ test $? -eq 0 || { echo "Python 3 not found"; exit 1 ;}
 
 my_dir=`dirname $0`
 
-$py_cmd ${my_dir}/measure-sweeping-revocation.py ${1:-CompactingSweepingRevoker} | tee >(${my_dir}/graph/graph.py)
+echo "$py_cmd ${my_dir}/measure-sweeping-revocation.py ${1:-CompactingSweepingRevoker} | tee >(${my_dir}/graph/graph.py)"
