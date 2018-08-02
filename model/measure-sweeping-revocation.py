@@ -330,8 +330,9 @@ class AllocatorAddrSpaceModelSubscriber:
 class BaseSweepingRevoker(AllocatorAddrSpaceModelSubscriber):
     def __init__(self, capacity_ivals=2**64):
         super().__init__()
+        self.sweeps = 0
         self.swept = 0
-        self.sweeps = []
+        self.swept_ivals = 0
         self._capacity_ivals = int(capacity_ivals)
 
     @property
@@ -373,7 +374,9 @@ class BaseSweepingRevoker(AllocatorAddrSpaceModelSubscriber):
         #self._ns_last_print = run.timestamp_ns
         #self.sweeps.append((run.timestamp_ns, amount))
 
+        self.sweeps += 1
         self.swept += amount
+        self.swept_ivals += len(addr_ivals)
         output.update()
 
 
@@ -441,13 +444,15 @@ class GraphOutput(BaseOutput):
         self._print_header()
 
     def _print_header(self):
-        print('#{0}\t{1}\t{2}\t{3}\t{4}\t{5}'.format('timestamp', 'addr-space-total', 'addr-space-sweep',
-              'allocator-mapped', 'allocator-allocd', 'allocator-swept'), file=self._file)
+        print('#{0}\t{1}\t{2}\t{3}\t{4}\t{5}\t{6}\t{7}'.format('timestamp-unix-ns', 'addr-space-total-b',
+              'addr-space-sweep-b', 'allocator-mapped-b', 'allocator-allocd-b', 'sweeps', 'swept-b',
+              'swept-intervals'), file=self._file)
 
     @BaseOutput.rate_limited_runms(100)
     def update(self):
-        print('{0}\t{1}\t{2}\t{3}\t{4}\t{5}'.format(run.timestamp, addr_space.size, addr_space.sweep_size,
-              alloc_state.mapd_size, alloc_state.allocd_size, revoker.swept), file=self._file)
+        print('{0}\t{1}\t{2}\t{3}\t{4}\t{5}\t{6}\t{7}'.format(run.timestamp, addr_space.size,
+              addr_space.sweep_size, alloc_state.mapd_size, alloc_state.allocd_size, revoker.sweeps,
+              revoker.swept, revoker.swept_ivals), file=self._file)
 
 
 class AllocationMapOutput(BaseOutput, AllocatorAddrSpaceModelSubscriber):
