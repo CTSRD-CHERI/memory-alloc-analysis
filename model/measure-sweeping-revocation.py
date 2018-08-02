@@ -539,8 +539,8 @@ argp.add_argument("--log-level", help="Set the logging level",
                   choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL/default/"],
                   default="CRITICAL")
 argp.add_argument("--allocation-map-output", help="Output file for the allocation map (disabled by default)")
-argp.add_argument('revoker', choices=["NaiveSweepingRevoker/default/", "CompactingSweepingRevoker", "account"],
-                  default='NaiveSweepingRevoker',
+argp.add_argument('revoker', choices=["NaiveSweepingRevoker", "CompactingSweepingRevoker/default/", "account"],
+                  default='CompactingSweepingRevoker',
                   help="Select the revoker type, or 'account' to assume error-free trace and speed up the"
                   " stats gathering.")
 args = argp.parse_args()
