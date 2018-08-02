@@ -72,6 +72,10 @@ class AddrIval(Interval):
     def value(self):
         return self.state
 
+    @property
+    def size(self):
+        return self.end - self.begin
+
     def __repr__(self):
         r = super().__repr__()
         r = r.replace('Interval', __class__.__name__, 1)
@@ -156,12 +160,12 @@ class BaseIntervalAddrSpaceModel(BaseAddrSpaceModel):
     def _update(self, ival):
         overlaps = self.__addr_ivals[ival.begin-1 : ival.end+1]
         # XXX-LPT: use __init__ kwds.get('calc_amount_for_addr_ival_states', default=[])
-        mapd_size_old = sum(((i.end - i.begin) for i in overlaps if i.state is AddrIvalState.MAPD))
-        allocd_size_old = sum(((i.end - i.begin) for i in overlaps if i.state is AddrIvalState.ALLOCD))
+        mapd_size_old = sum(i.size for i in overlaps if i.state is AddrIvalState.MAPD)
+        allocd_size_old = sum(i.size for i in overlaps if i.state is AddrIvalState.ALLOCD)
         self.__addr_ivals.add(ival)
         overlaps = self.__addr_ivals[ival.begin-1 : ival.end+1]
-        mapd_size_new = sum(((i.end - i.begin) for i in overlaps if i.state is AddrIvalState.MAPD))
-        allocd_size_new = sum(((i.end - i.begin) for i in overlaps if i.state is AddrIvalState.ALLOCD))
+        mapd_size_new = sum(i.size for i in overlaps if i.state is AddrIvalState.MAPD)
+        allocd_size_new = sum(i.size for i in overlaps if i.state is AddrIvalState.ALLOCD)
 
         self.mapd_size += mapd_size_new - mapd_size_old
         self.allocd_size += allocd_size_new - allocd_size_old
@@ -480,13 +484,11 @@ class AllocationMapOutput(BaseOutput, AllocatorAddrSpaceModelSubscriber):
 
         print('---', file=self._file)
         for p in pools:
-            psize = p.end - p.begin
-
-            chunk_size, rem = psize // AllocationMapOutput.POOL_MAP_RESOLUTION_IN_SYMBOLS,\
-                              psize % AllocationMapOutput.POOL_MAP_RESOLUTION_IN_SYMBOLS
-            chunk_size, rem = (chunk_size, rem) if chunk_size > 0 else (psize, 0)
+            chunk_size, rem = p.size // AllocationMapOutput.POOL_MAP_RESOLUTION_IN_SYMBOLS,\
+                              p.size % AllocationMapOutput.POOL_MAP_RESOLUTION_IN_SYMBOLS
+            chunk_size, rem = (chunk_size, rem) if chunk_size > 0 else (p.size, 0)
             chunk_offsets = itertools.chain(range(0, rem * (chunk_size+1), chunk_size+1),
-                                            range(rem * (chunk_size+1), psize, chunk_size))
+                                            range(rem * (chunk_size+1), p.size, chunk_size))
             chunks = [p.begin + co for co in chunk_offsets]
             chunk_states = (self._chunk_state(cb, ce) for cb, ce in
                             itertools.zip_longest(chunks, chunks[1:], fillvalue=p.end));
