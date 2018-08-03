@@ -535,14 +535,14 @@ class AllocationMapOutput(BaseOutput, AllocatorAddrSpaceModelSubscriber):
 
 # Parse command line arguments
 argp = argparse.ArgumentParser(description='Model allocation from a trace and output various measurements')
-argp.add_argument("--log-level", help="Set the logging level",
-                  choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL/default/"],
+argp.add_argument("--log-level", help="Set the logging level.  Defaults to CRITICAL",
+                  choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
                   default="CRITICAL")
 argp.add_argument("--allocation-map-output", help="Output file for the allocation map (disabled by default)")
-argp.add_argument('revoker', choices=["NaiveSweepingRevoker", "CompactingSweepingRevoker/default/", "account"],
-                  default='CompactingSweepingRevoker',
+argp.add_argument('revoker', choices=["NaiveSweepingRevoker", "CompactingSweepingRevoker", "account"],
+                  nargs='?', default='CompactingSweepingRevoker',
                   help="Select the revoker type, or 'account' to assume error-free trace and speed up the"
-                  " stats gathering.")
+                  " stats gathering.  Defaults to CompactingSweepingRevoker")
 args = argp.parse_args()
 
 # Set up logging
