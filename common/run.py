@@ -62,36 +62,36 @@ class Run:
 
     def _parse_trace(self, line):
         callstack, call, arg, res = line.split('\t')
-        arg = arg.split(' '); arg.insert(0, 0) # 1-indexed
+        arg = arg.split(' ')
 
         if call == 'malloc':
             begin = int(res, base=16)
-            end = begin + int(arg[1])
+            end = begin + int(arg[0])
         elif call == 'calloc':
             begin = int(res, base=16)
-            end = begin + int(arg[1]) * int(arg[2])
+            end = begin + int(arg[0]) * int(arg[1])
         elif call == 'aligned_alloc':
             begin = int(res, base=16)
-            end = begin + int(arg[2])
+            end = begin + int(arg[1])
         elif call == 'posix_memalign':
             begin = int(res, base=16)
-            end = begin + int(arg[2])
+            end = begin + int(arg[1])
         elif call == 'realloc':
-            begin_old = int(arg[1], base=16)
+            begin_old = int(arg[0], base=16)
             begin_new = int(res, base=16)
-            end_new = begin_new + int(arg[2])
+            end_new = begin_new + int(arg[1])
         elif call == 'free':
-            begin = int(arg[1], base=16)
+            begin = int(arg[0], base=16)
         elif call == 'mmap':
             begin = int(res, base=16)
-            end = begin + int(arg[2])
-            prot = int(arg[3])
+            end = begin + int(arg[1])
+            prot = int(arg[2])
         elif call == 'munmap':
             begin = int(arg[1], base=16)
-            end = begin + int(arg[2])
+            end = begin + int(arg[1])
         elif call == 'revoke':
-            begin = [int(b, base=16) for b in arg[1::2]]
-            end = [int(e, base=16) for e in arg[2::2]]
+            begin = [int(b, base=16) for b in arg[0::2]]
+            end = [int(e, base=16) for e in arg[1::2]]
             if len(begin) != len(end):
                 raise ValueError('revoke call trace should have an even number of args, not {0}'
                                 .format(len(begin) + len(end)))
@@ -136,7 +136,8 @@ class Run:
             sl.sweep_size_measured(sweep_size)
 
 
-# Trace producer, the inverse of Run
+# Trace producer, a one-sided inverse of Run
+# (in particular, Run o Unrun === id)
 
 class Unrun:
     def __init__(self, tslam, out=sys.stdout):
