@@ -10,7 +10,7 @@ class Allocator(ClingyAllocatorBase):
         # Just go grab the first TIDY bucket
         return next(tidys)[0]
 
-  def _alloc_place_large(self, sz, stk, tidys) :
+  def _alloc_place_large(self, stk, sz, tidys) :
     # Just go grab the first TIDY bucket span large enough
     return next(loc for (loc,tsz) in tidys if tsz >= sz)
 

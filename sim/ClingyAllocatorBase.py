@@ -311,7 +311,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
 
    brss = [(self._bix2va(bix), self._bix2va(bix+sz))
            for (bix, sz, _) in brss]
-   self._publish('revoked', brss)
+   self._publish('revoked', "---", brss)
 
    self._lastrevt = self._tslam()
 
@@ -368,7 +368,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
     self._maxbix = max(self._maxbix, reqbase + reqbsz)
     self._bix2state.mark(reqbase, reqbsz, nst)
 
-  def _alloc(self, sz):
+  def _alloc(self, stk, sz):
     if __debug__ : logging.debug(">_alloc sz=%d", sz)
     if self._paranoia > PARANOIA_STATE_PER_OPER : self._state_asserts()
 
@@ -383,9 +383,9 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
       sz = self._szfix(sz)
       bbs = self._szbix2ap.get(sz, {})
 
-      bbix = self._alloc_place_small("---", iter(bbs.keys()), tidys)
+      bbix = self._alloc_place_small(stk, iter(bbs.keys()), tidys)
       if bbix not in bbs :
-        self._publish('mapd', self._bix2va(bbix), self._bix2va(bbix+1))
+        self._publish('mapd', stk, self._bix2va(bbix), self._bix2va(bbix+1))
         self._mark_allocated(bbix, 1, BuckSt.BUMP)
         self._bix2szbm[bbix] = (sz, 0)
         if sz not in self._szbix2ap : self._szbix2ap[sz] = {}
@@ -419,7 +419,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
 
       # Placement
       bsz = self._sz2nbucks(sz)
-      bbix = self._alloc_place_large(bsz, "---", tidys)
+      bbix = self._alloc_place_large(stk, bsz, tidys)
 
       if __debug__ :
         (pbase, psz, pv) = self._bix2state.get(bbix)
@@ -429,7 +429,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
       self._mark_allocated(bbix, bsz, BuckSt.WAIT)
       self._bix2szbm[bbix] = (sz, 0)
       res = self._bix2va(bbix)
-      self._publish('mapd', res, res + self._nbucks2sz(bsz))
+      self._publish('mapd', "---", res, res + self._nbucks2sz(bsz))
 
     self._try_revoke()
     if __debug__ : logging.debug("<_alloc eva=%x", res)
@@ -488,7 +488,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
         # XXX At the moment, we only unmap when the entire bucket is free.
         # This is just nwf being lazy and not wanting to do the bit math for
         # page-at-a-time release.
-        self._publish('unmapd', self._bix2va(bix), self._bix2va(bix+1))
+        self._publish('unmapd', "---", self._bix2va(bix), self._bix2va(bix+1))
 
         self._try_revoke()
       else :
@@ -508,7 +508,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
       self._njunkb += bsz
       self._nbwb -= bsz
       self._bix2state.mark(bix, bsz, BuckSt.JUNK)
-      self._publish('unmapd', self._bix2va(bix), self._bix2va(bix+bsz))
+      self._publish('unmapd', "---", self._bix2va(bix), self._bix2va(bix+bsz))
       self._try_revoke()
     if __debug__ : logging.debug("<_free eva=%x", eva)
 
@@ -579,7 +579,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
           self._bix2va(bix), osz, nsz)
       self._bix2szbm[bix] = (nsz, 0)
       self._mark_allocated(eix, self._sz2nbucks(nsz - osz), BuckSt.WAIT)
-      self._publish('mapd',
+      self._publish('mapd', "---",
                     self._nbucks2sz(bix + self._sz2nbucks(osz)), \
                     self._nbucks2sz(bix + self._sz2nbucks(nsz)))
       return True

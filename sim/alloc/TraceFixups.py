@@ -121,9 +121,9 @@ class Allocator(Publisher):
     self._aa.chop(begin,end)
     self._aa.add(AddrInterval(begin,end,VAState.ALLOCD))
 
-  def allocd(self, begin, end):
+  def allocd(self, stk, begin, end):
     self._allocd(begin, end)
-    self._publish('allocd', begin, end)
+    self._publish('allocd', stk, begin, end)
   
 # --------------------------------------------------------------------- }}}
 # Freeing ------------------------------------------------------------- {{{
@@ -169,40 +169,40 @@ class Allocator(Publisher):
     self._aa.chop(addr, end)
     self._aa.add(AddrInterval(addr, end, VAState.FREED))
 
-  def freed(self, addr):
+  def freed(self, stk, addr):
     self._freed(addr)
-    self._publish('freed', addr)
+    self._publish('freed', stk, addr)
   
 # --------------------------------------------------------------------- }}}
 # Reallocation -------------------------------------------------------- {{{
 
-  def reallocd(self, begin_old, begin_new, end_new):
+  def reallocd(self, stk, begin_old, begin_new, end_new):
     self._freed(begin_old)
     self._allocd(begin_new, end_new)
-    self._publish('reallocd', begin_old, begin_new, end_new)
+    self._publish('reallocd', stk, begin_old, begin_new, end_new)
 
 # --------------------------------------------------------------------- }}}
 # Mapping ------------------------------------------------------------- {{{
 
-  def mapd(self, begin, end):
+  def mapd(self, stk, begin, end):
 
     # XXX
 
-    self._publish('mapd', begin, end)
+    self._publish('mapd', stk, begin, end)
   
 # --------------------------------------------------------------------- }}}
 # Unmapping ----------------------------------------------------------- {{{
 
-  def unmapd(self, begin, end):
+  def unmapd(self, stk, begin, end):
 
     # XXX
 
-    self._publish('unmapd', begin, end)
+    self._publish('unmapd', stk, begin, end)
   
 # --------------------------------------------------------------------- }}}
 # Revoking ------------------------------------------------------------ {{{
 
-  def revoked(self, spans):
+  def revoked(self, stk, spans):
 
     for (begin,end) in spans:
       overlaps = self._aa[begin:end]
@@ -213,7 +213,7 @@ class Allocator(Publisher):
 
         # XXX fix by freeing
 
-    self._publish('revoked', spans)
+    self._publish('revoked', stk, spans)
   
 # --------------------------------------------------------------------- }}}
 # Size-measurement pass-thru ------------------------------------------ {{{
