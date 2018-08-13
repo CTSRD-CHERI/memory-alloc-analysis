@@ -58,16 +58,18 @@ def _vcc_noop(vold, vnew, loc, sz):
 
 class IntervalMap:
     @classmethod
-    def from_valued_interval_domain(cls, ival, **kwds):
-        imap = cls(ival.begin, ival.end - ival.begin, ival.value, **kwds)
+    def from_valued_interval_domain(cls, ival, *, coalescing=True, **kwds):
+        imap = cls(ival.begin, ival.end - ival.begin, ival.value, coalescing=coalescing, **kwds)
         imap._ival_type = type(ival)
         return imap
 
-    def __init__(self, base, sz, v, **kwds):
+    def __init__(self, base, sz, v, *, coalescing=True, **kwds):
         self.vcc = kwds.get('vcc', _vcc_noop)
         self.d = SortedDict()
         self.d[base] = (sz, v)
         self._base, self._sz, self._v = base, sz, v
+        # XXX-LPT: can I subclass instead of this bool?
+        self._coalescing = coalescing
 
 
     def add(self, ival):
@@ -150,7 +152,7 @@ class IntervalMap:
         return ((base, sz, v) for base, (sz, v) in self.d.items())
 
 
-    def mark(self, loc, sz, v):
+    def mark(self, loc, sz, v, recursing=0):
         if not self._base <= loc < self._base + self._sz:
             raise ValueError(loc)
         d = self.d
@@ -162,13 +164,13 @@ class IntervalMap:
         szex = None
         vex = None
     
-        # Coalescing controls
-        docleft = False
-        docright = False
-    
+        # Coalescing flags
+        couldcleft = False
+        couldcright = False
+
         if loc in d:
             # Left-aligned change, try coalescing left after change
-            if ix != 0 : docleft = True
+            if ix != 0 : couldcleft = True
             (szex, vex) = d[loc]
         elif ix != 0 :
             # Not left-aligned.  Update our notion of self
@@ -189,7 +191,8 @@ class IntervalMap:
                     # print("Spurious [%d+%d] (in [%d+%d]), but pushing forward" % (loc, sz, k, szex))
                     self.vcc(vex, v, loc, sz)
                     # Recurse once to change the existing value
-                    return self.mark(k+szex, loc + sz - k - szex, v)
+                    # XXX Here docleft required for correctness 
+                    return self.mark(k+szex, loc + sz - k - szex, v, recursing + 1)
                 else :
                     #            {  vcc  }
                     # |----------|-------|------|
@@ -213,7 +216,7 @@ class IntervalMap:
             else :
                 # Replace region wholesale, coalesce in both directions
                 d[loc] = (sz, v)
-                if ix < len(d)-1 : docright = True
+                if ix < len(d)-1 : couldcright = True
     
                 self.vcc(vex, v, loc, sz)
         elif sz < szex:
@@ -233,7 +236,7 @@ class IntervalMap:
                 pass 
             else :
                 # XXX-LPT: shouldn't this be sz?
-                # --> no, expanding to the right
+                # --> no, expanding to the right and replacing next
                 d[loc] = (szex, v)
 
             self.vcc(vex, v, loc, szex)
@@ -257,15 +260,16 @@ class IntervalMap:
             else:
                 assert szex == sz, "Invariant szex <= sz broken, loop exited cleanly and szex={0} != sz={1}"\
                                    .format(szex, sz)
-                #if ix < len(d)-1: docright = True
+                #if ix < len(d)-1: couldcright = True
 
             if szex != sz :
-                self.mark(loc+szex, sz-szex, v)
+                # XXX Here docleft required for correctness 
+                self.mark(loc+szex, sz-szex, v, recursing + 1)
                 (sz, _) = d[loc]
 
-            docright = loc+sz in d
+            couldcright = loc+sz in d
 
-        if docright:
+        if couldcright and self._coalescing:
             # print("PreRC", ix, d)
             kr = d.iloc[ix+1]
             (szr, vr) = d[kr]
@@ -276,7 +280,7 @@ class IntervalMap:
                 d[loc] = (sz, v)
                 # print("RC", ix, d)
     
-        if docleft:
+        if couldcleft and (self._coalescing or recursing):
             # print("PreLC", ix, d)
             kl = d.iloc[ix-1]
             (szl, vl) = d[kl]

@@ -36,8 +36,7 @@ import argparse
 import re
 import itertools
 
-# https://pypi.org/project/bintrees
-from intervaltree import Interval, IntervalTree
+from intervaltree import Interval
 
 if __name__ == "__main__" and __package__ is None:
     import os
@@ -87,34 +86,6 @@ class AddrIval(Interval):
     __str__ = __repr__
 
 
-def intervaltree_query_checked(tree, point):
-    ival = tree[point]
-    assert len(ival) <= 1, 'Bug: overlapping address intervals at {0:x} {1}'.format(point, tree)
-    return ival.pop() if ival else None
-
-
-# XXX-LPT: Should be internalised by AllocatedAddrSpaceModel, and use the backing intervalmap
-# at least for the coalesce-with-self part of coalescing
-def intervaltree_query_coalesced(tree, point, **kwds):
-    ival = intervaltree_query_checked(tree, point)
-    if not ival:
-        return None
-    data_coalesced = {ival.data, }
-    data_coalesced.update(kwds.get('coalesce_with', set()))
-
-    ival_left = ival
-    while ival_left and ival_left.data in data_coalesced:
-        begin = ival_left.begin
-        ival_left = intervaltree_query_checked(tree, begin - 1)
-
-    ival_right = ival
-    while ival_right and ival_right.data in data_coalesced:
-        end = ival_right.end
-        ival_right = intervaltree_query_checked(tree, end)
-
-    return AddrIval(begin, end, ival.data)
-
-
 class BaseAddrSpaceModel:
     def __init__(self, **kwds):
         super().__init__()
@@ -162,16 +133,16 @@ class BaseIntervalAddrSpaceModel(BaseAddrSpaceModel):
         output.update()
 
 
+    # XXX-LPT: is there a coalesce_with parameter equivalent to addr_ival_coalesced
     def addr_ivals_coalesced_sorted(self, begin=None, end=None):
         if begin is not None and end is not None:
             return [i for i in self.__addr_ivals[begin:end] if i.value is not None]
         else:
             return [i for i in self.__addr_ivals if i.value is not None]
 
-    def addr_ival_coalesced(self, point):
-        i = self.__addr_ivals[point]
+    def addr_ival_coalesced(self, point, **kwds):
+        i = self.__addr_ivals.get(point, **kwds)
         return i if i.value is not None else None
-
 
 
 class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
@@ -179,7 +150,7 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
         super().__init__(calc_total_for_state=AddrIvalState.ALLOCD)
         # _addr_ivals should be protected (i.e. named __addr_ivals), but external visibility
         # is still needed; see intervaltree_query_coalesced and its usage
-        self._addr_ivals = IntervalTree()
+        self.__addr_ivals = IntervalMap.from_valued_interval_domain(AddrIval(0, 2**64, None), coalescing=False)
 
 
     @property
@@ -189,7 +160,7 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
 
     def allocd(self, begin, end):
         interval = AddrIval(begin, end, AddrIvalState.ALLOCD)
-        overlaps = self._addr_ivals[begin:end]
+        overlaps = self.addr_ivals(begin, end)
         overlaps_allocd = [o for o in overlaps if o.state is AddrIvalState.ALLOCD]
         overlaps_freed = [o for o in overlaps if o.state is AddrIvalState.FREED]
         if overlaps_allocd:
@@ -198,14 +169,12 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
 
         if overlaps_freed:
             self._publish('reused', begin, end)
-        if overlaps:
-            self._addr_ivals.chop(begin, end)
         super()._update(interval)
-        self._addr_ivals.add(interval)
+        self.__addr_ivals.add(interval)
 
 
     def reallocd(self, begin_old, begin_new, end_new):
-        interval_old = intervaltree_query_checked(self._addr_ivals, begin_old)
+        interval_old = self.addr_ival(begin_old)
         if not interval_old:
             logger.warning('%d\tW: No existing allocation to realloc at %x, doing just alloc',
                   run.timestamp, begin_old)
@@ -218,16 +187,18 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
         # Free the old allocation, just the part that does not overlap the new allocation
         interval_new = AddrIval(begin_new, end_new, AddrIvalState.ALLOCD)
         if interval_new.overlaps(interval_old):
-            super()._update(AddrIval(interval_old.begin, interval_old.end, None))
-            self._addr_ivals.remove(interval_old)
+            # Remove the old interval to prevent error reporting in allocd
+            ival_old_removed = AddrIval(interval_old.begin, interval_old.end, None)
+            super()._update(ival_old_removed)
+            self.__addr_ivals.add(ival_old_removed)
             if interval_new.le(interval_old) and interval_new.end != interval_old.end:
                 ival_old_freed_rpart = AddrIval(interval_new.end, interval_old.end, AddrIvalState.FREED)
                 super()._update(ival_old_freed_rpart)
-                self._addr_ivals.add(ival_old_freed_rpart)
+                self.__addr_ivals.add(ival_old_freed_rpart)
             if interval_new.ge(interval_old) and interval_old.begin != interval_new.begin:
                 ival_old_freed_lpart = AddrIval(interval_old.begin, interval_new.begin, AddrIvalState.FREED)
                 super()._update(ival_old_freed_lpart)
-                self._addr_ivals.add(ival_old_freed_lpart)
+                self.__addr_ivals.add(ival_old_freed_lpart)
         else:
             # XXX use _freed and eliminate spurious W/E reporting
             self.freed(begin_old)
@@ -236,9 +207,8 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
 
 
     def freed(self, begin):
-        interval = intervaltree_query_checked(self._addr_ivals, begin)
+        interval = self.addr_ival(begin)
         if interval:
-            self._addr_ivals.remove(interval)
             if begin != interval.begin or interval.state is not AddrIvalState.ALLOCD:
                 logger.warning('%d\tW: Freed(%x) misfrees %s', run.timestamp, begin, interval)
             interval = AddrIval(interval.begin, interval.end, AddrIvalState.FREED)
@@ -247,7 +217,7 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
                   run.timestamp, begin)
             interval = AddrIval(begin, begin + 1, AddrIvalState.FREED)
         super()._update(interval)
-        self._addr_ivals.add(interval)
+        self.__addr_ivals.add(interval)
 
 
     def revoked(self, *bes):
@@ -255,7 +225,7 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
             bes = [(bes[0], bes[1])]
         err_str = ''
         for begin, end in bes:
-            ivals_allocd = [ival for ival in self._addr_ivals[begin:end] if ival.state is AddrIvalState.ALLOCD]
+            ivals_allocd = [ival for ival in self.addr_ivals(begin, end) if ival.state is AddrIvalState.ALLOCD]
             if ivals_allocd:
                 err_str += 'Bug: revoking address intervals between {0:x}-{1:x} that are still allocated {2}\n'\
                            .format(begin, end, ivals_allocd)
@@ -264,15 +234,15 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
         for begin, end in bes:
             ival = AddrIval(begin, end, AddrIvalState.REVOKED)
             super()._update(ival)
-            self._addr_ivals.chop(ival.begin, ival.end)
-            self._addr_ivals.add(ival)
+            self.__addr_ivals.add(ival)
 
 
     def addr_ivals(self, begin=None, end=None):
-        return self._addr_ivals[begin:end]
+        return [i for i in self.__addr_ivals[begin:end] if i.value is not None]
 
     def addr_ival(self, point):
-        return intervaltree_query_checked(self._addr_ivals, point)
+        i = self.__addr_ivals[point]
+        return i if i.value is not None else None
 
 
 class MappedAddrSpaceModel(BaseIntervalAddrSpaceModel):
@@ -409,8 +379,8 @@ class CompactingSweepingRevoker(BaseSweepingRevoker):
         olaps_coalesced = []
 
         while ivals:
-            ival = intervaltree_query_coalesced(alloc_state._addr_ivals, ivals.pop().begin,
-                                                coalesce_with={AddrIvalState.REVOKED})
+            ival = alloc_state.addr_ival_coalesced(ivals.pop().begin,
+                                                   coalesce_with_self_and_values={AddrIvalState.REVOKED})
             olaps_coalesced.append(ival)
             while ivals and ival.end >= ivals[-1].begin:
                 assert ival.end > ivals[-1].begin, '{0} failed to coalesce with {1}'.format(ival, ivals[-1])
