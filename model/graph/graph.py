@@ -40,7 +40,7 @@ plt.savefig('{0}-aspace_stats-vs-time.eps'.format(data0_label.lower()))
 plt.subplot(3, 1, 2)
 sweep_per_ns = (data0[y6][1:] - data0[y6][:-1]) / (data0[x][1:] - data0[x][:-1])
 sweep_per_s = sweep_per_ns * 10**9
-print(sweep_per_s)
+#print(sweep_per_s)
 plt.plot(time_s[:-1], sweep_per_s, color='blue')
 plt.title('{0} allocator sweeping amount requirement over time'.format(data0_label))
 plt.legend([''])
