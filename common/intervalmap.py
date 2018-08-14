@@ -125,6 +125,10 @@ class IntervalMap:
     def __getitem__(self, loc):
         d = self.d
         if isinstance(loc, slice):
+            if loc.start is None:
+                loc = slice(self._base, loc.stop)
+            if loc.stop is None:
+                loc = slice(loc.start, self._base + self._sz)
             try:
                 ret = [self.__getitem__.raw(self, loc.start), ]
             except ValueError:

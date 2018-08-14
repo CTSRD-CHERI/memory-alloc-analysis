@@ -287,10 +287,7 @@ class AllocatorAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
 
 
     def addr_ivals(self, begin=None, end=None):
-        if begin is not None and end is not None:
-            return self._addr_ivals[begin:end]
-        else:
-            return self._addr_ivals[:]
+        return self._addr_ivals[begin:end]
 
     def addr_ival(self, point):
         return intervaltree_query_checked(self._addr_ivals, point)
