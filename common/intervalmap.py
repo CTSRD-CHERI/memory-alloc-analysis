@@ -101,16 +101,18 @@ class IntervalMap:
             return (base, sz, v)
 
         basel, _, vl = (base, sz, v)
+        baser, szr, vr = (base, sz, v)
         #print('base={0:x} sz={1:x} v={2} values_coalesced={3}'.format(base, sz, v, values_coalesced), file=sys.stderr)
         try:
+            basel, _, vl = self.__getitem__.raw(self, basel - 1)
             while vl in values_coalesced:
-                base = basel
+                base, sz = basel, base + sz - basel
                 basel, _, vl = self.__getitem__.raw(self, basel - 1)
                 #print('basel={0:x} sz= vl={1}'.format(basel, vl), file=sys.stderr)
         except ValueError:
             pass
-        baser, szr, vr = (base, sz, v)
         try:
+            baser, szr, vr = self.__getitem__.raw(self, baser + szr)
             while vr in values_coalesced:
                 sz = baser + szr - base
                 baser, szr, vr = self.__getitem__.raw(self, baser + szr)
