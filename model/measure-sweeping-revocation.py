@@ -33,6 +33,7 @@ import sys
 import numpy
 import logging
 import argparse
+import re
 import itertools
 
 # https://pypi.org/project/bintrees
@@ -333,12 +334,12 @@ class AllocatorAddrSpaceModelSubscriber:
 
 
 class BaseSweepingRevoker(AllocatorAddrSpaceModelSubscriber):
-    def __init__(self, capacity_ivals=2**64):
+    def __init__(self, sweep_capacity_ivals=2**64):
         super().__init__()
         self.sweeps = 0
         self.swept = 0
         self.swept_ivals = 0
-        self._capacity_ivals = int(capacity_ivals)
+        self._sweep_capacity_ivals = int(sweep_capacity_ivals)
 
     @property
     def swept_mb(self):
@@ -353,38 +354,20 @@ class BaseSweepingRevoker(AllocatorAddrSpaceModelSubscriber):
         self._sweep(addr_space.size, [AddrIval(b, e, AddrIvalState.FREED) for b, e in bes])
 
 
-    # XXX-LPT: pack into sweeps of L addr_ivals, where L is an imposed limit
     def _sweep(self, amount, addr_ivals):
-        if len(addr_ivals) > self._capacity_ivals:
-            raise ValuError('{0} exceeds the limit for intervals at once ({1})'
-                            .format(len(addr_ivals), self._capacity_ivals))
+        rounds = len(addr_ivals) // self._sweep_capacity_ivals +\
+                 (len(addr_ivals) % self._sweep_capacity_ivals != 0)
+        if rounds > 1:
+            logger.warning('{0}\tW: Revoker capacity exceeded, doing {1} revocation rounds instead',
+                           run.timestamp, rounds)
 
-        # XXX: can I format AddrIval like [x+mb]
-        #ts_str = '{0:>' + str(len(str(run.timestamp))) + '}'
-        #if hasattr(self, '_ns_last_print'):
-        #    delta_ns = run.timestamp_ns - self._ns_last_print
-        #    if delta_ns > 10**9:
-        #        delta_str = str(delta_ns // 10**9) + 's'
-        #    elif delta_ns > 10**6:
-        #        delta_str = str(delta_ns // 10**6) + 'ms'
-        #    elif delta_ns > 10**3:
-        #        delta_str = str(delta_ns // 10**3) + 'us'
-        #    else:
-        #        delta_str = str(delta_ns) + 'ns'
-        #    ts_str = ts_str.format('+' + delta_str)
-        #else:
-        #    ts_str = ts_str.format(run.timestamp)
-        #print('{0}\tSweep {1:d}MB revoking references to {2} intervals'.format(ts_str, amount // 2**20, addr_ivals),
-        #      file=sys.stdout)
-        #self._ns_last_print = run.timestamp_ns
-        #self.sweeps.append((run.timestamp_ns, amount))
-
-        self.sweeps += 1
-        self.swept += amount
+        self.sweeps += rounds
+        self.swept += amount * rounds
         self.swept_ivals += len(addr_ivals)
         output.update()
 
 
+# Naive --> Simple?
 class NaiveSweepingRevoker(BaseSweepingRevoker):
     def reused(self, alloc_state, begin, end):
         intervals = [i for i in alloc_state.addr_ivals(begin, end) if i.state is AddrIvalState.FREED]
@@ -396,22 +379,47 @@ class NaiveSweepingRevoker(BaseSweepingRevoker):
 
 class CompactingSweepingRevoker(BaseSweepingRevoker):
     def reused(self, alloc_state, begin, end):
-        intervals = [i for i in alloc_state.addr_ivals() if i.state is AddrIvalState.FREED]
-        intervals.sort(reverse=True)
-        intervals_coalesced = []
+        overlaps = [i for i in alloc_state.addr_ivals(begin, end) if i.state is AddrIvalState.FREED]
+        olaps_coalesced = self._coalesce_freed_and_revoked(overlaps)
 
-        while intervals:
-            ival = intervaltree_query_coalesced(alloc_state._addr_ivals, intervals.pop().begin,
-                                                coalesce_with={AddrIvalState.REVOKED})
-            intervals_coalesced.append(ival)
-            while intervals and ival.end >= intervals[-1].begin:
-                assert ival.end > intervals[-1].begin, '{0} failed to coalesce with {1}'.format(ival, intervals[-1])
-                intervals.pop()
-
-        if intervals_coalesced:
-            self._sweep(addr_space.size, intervals_coalesced)
-        for ival in intervals_coalesced:
+        if olaps_coalesced:
+            incr = True
+            addr_bck, addr_fwd = olaps_coalesced[0].begin, olaps_coalesced[-1].end
+            while len(olaps_coalesced) < self._sweep_capacity_ivals and incr:
+                delta = self._sweep_capacity_ivals - len(olaps_coalesced)
+                ivals_prev = [i for i in
+                              alloc_state.addr_ivals(addr_bck - 0x1000, addr_bck)
+                              if i.state is AddrIvalState.FREED]
+                ivals_prev = CompactingSweepingRevoker._coalesce_freed_and_revoked(ivals_prev)[:delta//2 + delta%2]
+                ivals_next = [i for i in
+                              alloc_state.addr_ivals(addr_fwd, addr_fwd + 0x1000)
+                              if i.state is AddrIvalState.FREED]
+                ivals_next = CompactingSweepingRevoker._coalesce_freed_and_revoked(ivals_next)[:delta//2]
+                ivals_prev.extend(olaps_coalesced)
+                ivals_prev.extend(ivals_next)
+                olaps_coalesced = ivals_prev
+                incr = (self._sweep_capacity_ivals - len(olaps_coalesced)) < delta
+                addr_bck -= 0x1000
+                addr_fwd += 0x1000
+            self._sweep(addr_space.size, olaps_coalesced)
+        for ival in olaps_coalesced:
             alloc_state.revoked(ival.begin, ival.end)
+
+
+    @staticmethod
+    def _coalesce_freed_and_revoked(ivals):
+        ivals.sort(reverse=True)
+        olaps_coalesced = []
+
+        while ivals:
+            ival = intervaltree_query_coalesced(alloc_state._addr_ivals, ivals.pop().begin,
+                                                coalesce_with={AddrIvalState.REVOKED})
+            olaps_coalesced.append(ival)
+            while ivals and ival.end >= ivals[-1].begin:
+                assert ival.end > ivals[-1].begin, '{0} failed to coalesce with {1}'.format(ival, ivals[-1])
+                ivals.pop()
+
+        return olaps_coalesced
 
 
 class BaseOutput:
@@ -540,10 +548,10 @@ argp.add_argument("--log-level", help="Set the logging level.  Defaults to CRITI
                   choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
                   default="CRITICAL")
 argp.add_argument("--allocation-map-output", help="Output file for the allocation map (disabled by default)")
-argp.add_argument('revoker', choices=["NaiveSweepingRevoker", "CompactingSweepingRevoker", "account"],
-                  nargs='?', default='CompactingSweepingRevoker',
+argp.add_argument('revoker', nargs='?', default='CompactingSweepingRevoker',
                   help="Select the revoker type, or 'account' to assume error-free trace and speed up the"
-                  " stats gathering.  Defaults to CompactingSweepingRevoker")
+                  " stats gathering.  Revoker types: NaiveSweepingRevokerN, CompactingSweepingRevokerN,"
+                  " where N is the revoker capacity (in # of capabilities, defaults to 1024).")
 args = argp.parse_args()
 
 # Set up logging
@@ -558,8 +566,9 @@ if args.revoker == "account":
 else:
     alloc_state = AllocatorAddrSpaceModel()
     addr_space = AddrSpaceModel()
-    revoker_cls = globals()[args.revoker]
-    revoker = revoker_cls()
+    m = re.search('([a-zA-Z]+)([0-9]+)?', args.revoker)
+    revoker_cls = globals()[m.group(1)]
+    revoker = revoker_cls(*(m.group(2),) if m.group(2) is not None else (1024,))
     alloc_state.register_subscriber(revoker)
 
 # Set up the output
@@ -576,6 +585,7 @@ run.replay()
 output.update()  # ensure at least one line of output
 if args.allocation_map_output:
     map_output_file.close()
+
 '''
 print('----', file=sys.stdout)
 print('{0} swept {1}GB in {2} sweeps in a {3}s run trace\n'
