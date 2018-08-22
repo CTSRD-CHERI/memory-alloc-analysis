@@ -367,8 +367,7 @@ class BaseSweepingRevoker(AllocatorAddrSpaceModelSubscriber):
         output.update()
 
 
-# Naive --> Simple?
-class NaiveSweepingRevoker(BaseSweepingRevoker):
+class SimpleSweepingRevoker(BaseSweepingRevoker):
     def reused(self, alloc_state, begin, end):
         intervals = [i for i in alloc_state.addr_ivals(begin, end) if i.state is AddrIvalState.FREED]
         if intervals:
