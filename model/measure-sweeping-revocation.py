@@ -233,12 +233,16 @@ class AllocatorAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
         # Free the old allocation, just the part that does not overlap the new allocation
         interval_new = AddrIval(begin_new, end_new, AddrIvalState.ALLOCD)
         if interval_new.overlaps(interval_old):
-            super()._update(AddrIval(interval_old.begin, interval_old.end, AddrIvalState.FREED))
+            super()._update(AddrIval(interval_old.begin, interval_old.end, None))
             self._addr_ivals.remove(interval_old)
-            if interval_new.lt(interval_old):
-                self._addr_ivals.add(AddrIval(interval_new.end, interval_old.end, AddrIvalState.FREED))
-            if interval_new.gt(interval_old):
-                self._addr_ivals.add(AddrIval(interval_old.begin, interval_new.begin, AddrIvalState.FREED))
+            if interval_new.le(interval_old) and interval_new.end != interval_old.end:
+                ival_old_freed_rpart = AddrIval(interval_new.end, interval_old.end, AddrIvalState.FREED)
+                super()._update(ival_old_freed_rpart)
+                self._addr_ivals.add(ival_old_freed_rpart)
+            if interval_new.ge(interval_old) and interval_old.begin != interval_new.begin:
+                ival_old_freed_lpart = AddrIval(interval_old.begin, interval_new.begin, AddrIvalState.FREED)
+                super()._update(ival_old_freed_lpart)
+                self._addr_ivals.add(ival_old_freed_lpart)
         else:
             # XXX use _freed and eliminate spurious W/E reporting
             self.freed(begin_old)
