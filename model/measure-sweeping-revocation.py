@@ -396,8 +396,8 @@ class CompactingSweepingRevoker(BaseSweepingRevoker):
                 ivals_prev.extend(ivals_next)
                 olaps_coalesced = ivals_prev
                 incr = (self._sweep_capacity_ivals - len(olaps_coalesced)) < delta
-                addr_bck -= 0x1000
-                addr_fwd += 0x1000
+                addr_bck = min(addr_bck - 0x1000, olaps_coalesced[0].begin)
+                addr_fwd = max(addr_fwd + 0x1000, olaps_coalesced[-1].end)
             self._sweep(addr_space.size, olaps_coalesced)
         for ival in olaps_coalesced:
             alloc_state.revoked(ival.begin, ival.end)
