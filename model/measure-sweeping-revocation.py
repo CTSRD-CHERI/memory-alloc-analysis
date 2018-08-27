@@ -283,7 +283,7 @@ class MappedAddrSpaceModel(BaseIntervalAddrSpaceModel):
     def mapd_size(self):
         return self._total
 
-    def mapd(self, _, begin, end):
+    def mapd(self, _, begin, end, __):
         self._update(AddrIval(begin, end, AddrIvalState.MAPD))
 
     def unmapd(self, _, begin, end):
@@ -292,8 +292,9 @@ class MappedAddrSpaceModel(BaseIntervalAddrSpaceModel):
 
 class AllocatorMappedAddrSpaceModel(MappedAddrSpaceModel):
     '''Tracks mapped/unmapped by the allocator for internal use'''
-    def mapd(self, callstack, begin, end):
-        if any((callstack.find(frame) >= 0 for frame in ('malloc', 'calloc', 'realloc', 'free'))):
+    def mapd(self, callstack, begin, end, prot):
+        if prot == 3 and\
+           any((callstack.find(frame) >= 0 for frame in ('malloc', 'calloc', 'realloc', 'free'))):
             self._update(AddrIval(begin, end, AddrIvalState.MAPD))
 
     # Inherits the unmapd() method, accepting unmaps that are also external to the allocator.
@@ -307,7 +308,7 @@ class AccountingAddrSpaceModel(BaseAddrSpaceModel):
         self.allocd_size = 0
         self.mapd_size = 0
 
-    def mapd(self, _, begin, end):
+    def mapd(self, _, begin, end, __):
         self.mapd_size += end - begin
     def unmapd(self, _, begin, end):
         self.mapd_size -= end - begin

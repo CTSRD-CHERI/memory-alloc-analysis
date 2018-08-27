@@ -78,6 +78,7 @@ class Run:
         elif call == 'mmap':
             begin = int(res, base=16)
             end = begin + int(arg[2])
+            prot = int(arg[3])
         elif call == 'munmap':
             begin = int(arg[1], base=16)
             end = begin + int(arg[2])
@@ -108,7 +109,7 @@ class Run:
             args = (begin, )
         elif call in ('mmap', ):
             meth = 'mapd'
-            args = (callstack, begin, end)
+            args = (callstack, begin, end, prot)
         elif call in ('munmap', ):
             meth = 'unmapd'
             args = (callstack, begin, end)
