@@ -93,7 +93,7 @@ def intervaltree_query_checked(tree, point):
     return ival.pop() if ival else None
 
 
-# XXX-LPT: Should be internalised by AllocatorAddrSpaceModel, and use the backing intervalmap
+# XXX-LPT: Should be internalised by AllocatedAddrSpaceModel, and use the backing intervalmap
 # at least for the coalesce-with-self part of coalescing
 def intervaltree_query_coalesced(tree, point, **kwds):
     ival = intervaltree_query_checked(tree, point)
@@ -113,8 +113,6 @@ def intervaltree_query_coalesced(tree, point, **kwds):
         ival_right = intervaltree_query_checked(tree, end)
 
     return AddrIval(begin, end, ival.data)
-
-
 
 
 class BaseAddrSpaceModel:
@@ -188,7 +186,7 @@ class BaseIntervalAddrSpaceModel(BaseAddrSpaceModel):
 
 
 
-class AllocatorAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
+class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
     def __init__(self):
         super().__init__()
         # _addr_ivals should be protected (i.e. named __addr_ivals), but external visibility
@@ -298,7 +296,7 @@ class AllocatorAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
         return intervaltree_query_checked(self._addr_ivals, point)
 
 
-class AddrSpaceModel(BaseIntervalAddrSpaceModel):
+class MappedAddrSpaceModel(BaseIntervalAddrSpaceModel):
     def mapd(self, _, begin, end):
         self._update(AddrIval(begin, end, AddrIvalState.MAPD))
 
@@ -328,12 +326,12 @@ class AccountingAddrSpaceModel(BaseAddrSpaceModel):
         self.freed(obegin)
         self.allocd(nbegin, nend)
 
-class AllocatorAddrSpaceModelSubscriber:
+class AllocatedAddrSpaceModelSubscriber:
     def reused(self, alloc_state, begin, end):
         raise NotImplemented
 
 
-class BaseSweepingRevoker(AllocatorAddrSpaceModelSubscriber):
+class BaseSweepingRevoker(AllocatedAddrSpaceModelSubscriber):
     def __init__(self, sweep_capacity_ivals=2**64):
         super().__init__()
         self.sweeps = 0
@@ -467,7 +465,7 @@ class GraphOutput(BaseOutput):
               revoker.swept, revoker.swept_ivals), file=self._file)
 
 
-class AllocationMapOutput(BaseOutput, AllocatorAddrSpaceModelSubscriber):
+class AllocationMapOutput(BaseOutput, AllocatedAddrSpaceModelSubscriber):
     POOL_MAX_ARTIFICIAL_GROWTH = 0x1000
 
     POOL_MAP_RESOLUTION_IN_SYMBOLS = 60
@@ -563,8 +561,8 @@ if args.revoker == "account":
     addr_space = AccountingAddrSpaceModel()
     revoker = BaseSweepingRevoker()
 else:
-    alloc_state = AllocatorAddrSpaceModel()
-    addr_space = AddrSpaceModel()
+    alloc_state = AllocatedAddrSpaceModel()
+    addr_space = MappedAddrSpaceModel()
     m = re.search('([a-zA-Z]+)([0-9]+)?', args.revoker)
     revoker_cls = globals()[m.group(1)]
     revoker = revoker_cls(*(m.group(2),) if m.group(2) is not None else (1024,))
