@@ -120,8 +120,6 @@ class BaseAddrSpaceModel:
         super().__init__()
         self.size = 0
         self.sweep_size = 0
-        self.mapd_size = 0
-        self.allocd_size = 0
 
     @property
     def size_kb(self):
@@ -137,41 +135,31 @@ class BaseAddrSpaceModel:
     def sweep_size_mb(self):
         return self.sweep_size // 2**20
 
-    @property
-    def mapd_size_kb(self):
-        return self.mapd_size // 2**10
-    @property
-    def mapd_size_mb(self):
-        return self.mapd_size // 2**20
-
     def size_measured(self, size):
         self.size = size
 
     def sweep_size_measured(self, sweep_size):
         self.sweep_size = sweep_size
 
-class BaseIntervalAddrSpaceModel(BaseAddrSpaceModel):
 
-    def __init__(self, **kwds):
+class BaseIntervalAddrSpaceModel(BaseAddrSpaceModel):
+    def __init__(self, *, calc_total_for_state):
         super().__init__()
         self.__addr_ivals = IntervalMap.from_valued_interval_domain(AddrIval(0, 2**64, None))
+        self._total = 0
+        self._calc_total_for_state = calc_total_for_state
+
 
     def _update(self, ival):
-        overlaps = self.__addr_ivals[ival.begin-1 : ival.end+1]
-        # XXX-LPT: use __init__ kwds.get('calc_amount_for_addr_ival_states', default=[])
-        mapd_size_old = sum(i.size for i in overlaps if i.state is AddrIvalState.MAPD)
-        allocd_size_old = sum(i.size for i in overlaps if i.state is AddrIvalState.ALLOCD)
+        overlaps_old = self.__addr_ivals[ival.begin-1 : ival.end+1]
+        total_old = sum(i.size for i in overlaps_old if i.state is self._calc_total_for_state)
+
         self.__addr_ivals.add(ival)
-        overlaps = self.__addr_ivals[ival.begin-1 : ival.end+1]
-        mapd_size_new = sum(i.size for i in overlaps if i.state is AddrIvalState.MAPD)
-        allocd_size_new = sum(i.size for i in overlaps if i.state is AddrIvalState.ALLOCD)
 
-        self.mapd_size += mapd_size_new - mapd_size_old
-        self.allocd_size += allocd_size_new - allocd_size_old
-
+        overlaps_new = self.__addr_ivals[ival.begin-1 : ival.end+1]
+        total_new = sum(i.size for i in overlaps_new if i.state is self._calc_total_for_state)
+        self._total += total_new - total_old
         output.update()
-        #logger.info('%d\t_update_map with %s\n\tmapd_size_old=%d mapd_size_new=%d self.mapd_size=%d',
-        #      run.timestamp, ival, mapd_size_old, mapd_size_new, self.mapd_size)
 
 
     def addr_ivals_coalesced_sorted(self, begin=None, end=None):
@@ -188,10 +176,15 @@ class BaseIntervalAddrSpaceModel(BaseAddrSpaceModel):
 
 class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
     def __init__(self):
-        super().__init__()
+        super().__init__(calc_total_for_state=AddrIvalState.ALLOCD)
         # _addr_ivals should be protected (i.e. named __addr_ivals), but external visibility
         # is still needed; see intervaltree_query_coalesced and its usage
         self._addr_ivals = IntervalTree()
+
+
+    @property
+    def allocd_size(self):
+        return self._total
 
 
     def allocd(self, begin, end):
@@ -202,13 +195,6 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
         if overlaps_allocd:
             logger.error('%d\tE: New allocation %s overlaps existing allocations %s, chopping them out',
                  run.timestamp, interval, overlaps_allocd)
-
-            #interval_at_begin = self._addr_ivals[begin]
-            #assert len(interval_at_begin) <= 1, 'Bug: overlapping address intervals at {0:x} {1}'
-            #                                    .format(begin, interval_at_begin)
-            #if interval_at_begin:
-            #    interval_at_begin = interval_at_begin.pop()
-            #    if interval_at_begin.state is AddrI
 
         if overlaps_freed:
             self._publish('reused', begin, end)
@@ -281,13 +267,6 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
             self._addr_ivals.chop(ival.begin, ival.end)
             self._addr_ivals.add(ival)
 
-    # Mapped/unmapped by the allocator for its own use
-    def mapd(self, callstack, begin, end):
-        if any((callstack.find(frame) >= 0 for frame in ('malloc', 'calloc', 'realloc', 'free'))):
-            self._update(AddrIval(begin, end, AddrIvalState.MAPD))
-    def unmapd(self, callstack, begin, end):
-        self._update(AddrIval(begin, end, AddrIvalState.UNMAPD))
-
 
     def addr_ivals(self, begin=None, end=None):
         return self._addr_ivals[begin:end]
@@ -297,16 +276,36 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
 
 
 class MappedAddrSpaceModel(BaseIntervalAddrSpaceModel):
+    def __init__(self):
+        super().__init__(calc_total_for_state=AddrIvalState.MAPD)
+
+    @property
+    def mapd_size(self):
+        return self._total
+
     def mapd(self, _, begin, end):
         self._update(AddrIval(begin, end, AddrIvalState.MAPD))
 
     def unmapd(self, _, begin, end):
         self._update(AddrIval(begin, end, AddrIvalState.UNMAPD))
 
+
+class AllocatorMappedAddrSpaceModel(MappedAddrSpaceModel):
+    '''Tracks mapped/unmapped by the allocator for internal use'''
+    def mapd(self, callstack, begin, end):
+        if any((callstack.find(frame) >= 0 for frame in ('malloc', 'calloc', 'realloc', 'free'))):
+            self._update(AddrIval(begin, end, AddrIvalState.MAPD))
+
+    # Inherits the unmapd() method, accepting unmaps that are also external to the allocator.
+    # Such unmaps have an effect on the mapd_size if they target the allocator's mappings
+
+
 class AccountingAddrSpaceModel(BaseAddrSpaceModel):
     def __init__(self):
         super().__init__()
         self._va2sz = {}
+        self.allocd_size = 0
+        self.mapd_size = 0
 
     def mapd(self, _, begin, end):
         self.mapd_size += end - begin
@@ -461,7 +460,7 @@ class GraphOutput(BaseOutput):
     @BaseOutput.rate_limited_runms(100)
     def update(self):
         print('{0}\t{1}\t{2}\t{3}\t{4}\t{5}\t{6}\t{7}'.format(run.timestamp, addr_space.size,
-              addr_space.sweep_size, alloc_state.mapd_size, alloc_state.allocd_size, revoker.sweeps,
+              addr_space.sweep_size, alloc_addr_space.mapd_size, alloc_state.allocd_size, revoker.sweeps,
               revoker.swept, revoker.swept_ivals), file=self._file)
 
 
@@ -563,6 +562,7 @@ if args.revoker == "account":
 else:
     alloc_state = AllocatedAddrSpaceModel()
     addr_space = MappedAddrSpaceModel()
+    alloc_addr_space = AllocatorMappedAddrSpaceModel()
     m = re.search('([a-zA-Z]+)([0-9]+)?', args.revoker)
     revoker_cls = globals()[m.group(1)]
     revoker = revoker_cls(*(m.group(2),) if m.group(2) is not None else (1024,))
@@ -576,7 +576,7 @@ if args.allocation_map_output:
     output = CompositeOutput(None, output, alloc_map_output)
     alloc_state.register_subscriber(alloc_map_output)
 run = Run(sys.stdin,
-          trace_listeners=[alloc_state, addr_space, revoker],
+          trace_listeners=[alloc_state, addr_space, alloc_addr_space, revoker],
           addr_space_sample_listeners=[addr_space, ])
 run.replay()
 output.update()  # ensure at least one line of output
