@@ -81,6 +81,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
   __slots__ = (
         '_bix2state',
         '_bix2szbm',
+        '_brscache',
         '_bucklog',
         '_lastrevt',
         '_maxbix',
@@ -91,6 +92,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
         '_paranoia',
         '_revoke_k',
         '_revoke_t',
+        '_rev_tidy_factor',
         '_szbix2ap',
         '_tidy_factor',
         '_tslam')
@@ -100,6 +102,8 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
 # Argument definition and response ------------------------------------ {{{
   @staticmethod
   def _init_add_args(argp) :
+    argp.add_argument('--rev-tidy-factor', action='store',
+                      type=float, default=8)
     argp.add_argument('--overhead-factor', action='store',
                       type=float, default=5)
     argp.add_argument('--tidy-factor', action='store',
@@ -122,6 +126,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
 
     self._overhead_factor = args.overhead_factor
     self._tidy_factor     = args.tidy_factor
+    self._rev_tidy_factor = args.rev_tidy_factor
 
     assert args.revoke_k > 0
     self._revoke_k        = args.revoke_k
@@ -163,6 +168,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
     self._njunkb = 0    # Number of buckets in JUNK state
     self._nbwb = 0      # Number of buckets in BUMP|WAIT states
     self._bix2state = IntervalMap(0, 2**(64 - self._bucklog), BuckSt.AHWM)
+    self._brscache = None   # Biggest revokable span cache
 
 # --------------------------------------------------------------------- }}}
 # Size-related utility functions -------------------------------------- {{{
@@ -282,7 +288,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
     # Exclude AHWM, which is like TIDY but would almost always be biggest
     okst = {BuckSt.TIDY, BuckSt.JUNK}
 
-    bests = [(0, (None, None))] # [(njunk, (bix, sz))] in ascending order
+    bests = [(0, None, None)] # [(njunk, bix, sz)] in ascending order
     cursorbix = 0
     while cursorbix < self._maxbix :
         (qbase, qsz, qv) = self._bix2state.get(cursorbix,
@@ -303,24 +309,33 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
         # Sort spans by number of JUNK buckets, not JUNK|TIDY buckets
         nj = sum(js)
         if nj <= bests[0][0] : continue
-        insort(bests, (nj, (qbase, qsz)))
+        insort(bests, (nj, qbase, qsz))
 
         bests = bests[(-n):]
 
     return bests
 
-  def _do_revoke(self) :
+  def _do_revoke(self, brss) :
    if self._paranoia > PARANOIA_STATE_ON_REVOKE : self._state_asserts()
 
-   # Find k largest revokable spans
-   brss = self._find_largest_revokable_spans(n=self._revoke_k)
-   brss = [ (bix, sz, nj) for (nj, (bix, sz)) in brss if sz > 0 ]
-   for (bix, sz, nj) in brss :
-       self._njunkb -= nj
-       self._bix2state.mark(bix,sz,BuckSt.TIDY)
+   nrev = sum([nj for (nj, _, _) in brss if nj > 0])
+   ntidy = self._maxbix - self._njunkb - self._nbwb
+   print("Revoking: ts=%.2f hwm=%d busy=%d junk=%d tidy=%d rev=%d rev/hwm=%2.2f%% rev/junk=%2.2f%% brss=%r" \
+         % (self._tslam() / 1e9, self._maxbix, self._nbwb, self._njunkb, ntidy,
+            nrev, nrev/self._maxbix * 100, nrev/self._njunkb * 100, brss),
+         file=sys.stderr)
+
+   for (nj, bix, sz) in brss :
+    if __debug__ :
+      okst = {BuckSt.TIDY, BuckSt.JUNK, BuckSt.AHWM}
+      (qbase, qsz, qv) = self._bix2state.get(bix, coalesce_with_values=okst)
+      assert qv in okst, ("Revoking non-revokable span!", bix, (qbase, qsz, qv))
+
+    self._njunkb -= nj
+    self._bix2state.mark(bix,sz,BuckSt.TIDY)
 
    brss = [(self._bix2va(bix), self._bix2va(bix+sz))
-           for (bix, sz, _) in brss]
+           for (_, bix, sz) in brss]
    self._publish('revoked', "---", brss)
 
    self._lastrevt = self._tslam()
@@ -334,6 +349,8 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
     # we're above our inverse occupancy factor (which is the ratio of BUMP|WAIT to TIDY buckets)
     #
     # It's been more than N seconds since we last revoked
+    #
+    # Revoking now would grow TIDY by a sufficient quantity
 
     ts = self._tslam()
 
@@ -343,7 +360,43 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
          and (ts - self._lastrevt >= self._revoke_t)
        ):
 
-        self._do_revoke()
+        nrev = None
+        brss = None
+
+        if self._brscache is not None :
+            # If the best revocable span is cached, just exract the answer
+            (nrev, _, _) = self._brscache
+        else :
+            # Otherwise, answer is not cached, so go compute it now.
+            # Compute one more so we can update the cache immediately.
+            brss = self._find_largest_revokable_spans(n=self._revoke_k + 1)
+
+            if brss == [] :
+                nrev = 0
+                self._brscache = (0, -1, -1)
+            else :
+                nrev = brss[-1][2]
+                # If we end up not revoking, extract the largest entry
+                self._brscache = brss[-1]
+
+        if ntidy < self._rev_tidy_factor * nrev :
+            # If we got nrev out of cache, we need the actual answer now
+            if brss is None :
+                brss = self._find_largest_revokable_spans(n=self._revoke_k + 1)
+
+            assert brss[-1][0] == nrev, \
+                ("Incorrect accounting in cache?", brss, nrev, self._brscache)
+
+            # Revoking the top k spans means that the (k+1)th span is
+            # certainly the most productive, in terms of the number of JUNK
+            # buckets it contains.  Immediately update the cache to avoid
+            # needing another sweep later.
+            if len(brss) > self._revoke_k :
+                (brss, self._brscache) = (brss[1:], brss[:1][0])
+            else :
+                self._brscache = (0, -1, -1)
+
+            self._do_revoke(brss)
 
 # --------------------------------------------------------------------- }}}
 # Allocation ---------------------------------------------------------- {{{
@@ -387,6 +440,11 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
         # rather than leaving them as AHWM.
         self._bix2state.mark(self._maxbix, reqbase - self._maxbix,
                              BuckSt.TIDY)
+
+    if self._brscache is not None :
+      (_, brsix, brssz) = self._brscache
+      if brsix <= reqbase < brsix + brssz :
+        self._brscache = None
 
     self._nbwb += reqbsz
     self._maxbix = max(self._maxbix, reqbase + reqbsz)
@@ -462,6 +520,19 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
 # --------------------------------------------------------------------- }}}
 # Free ---------------------------------------------------------------- {{{
 
+  def _mark_junk(self, bix, bsz) :
+    del self._bix2szbm[bix]
+    self._bix2state.mark(bix, bsz, BuckSt.JUNK)
+    self._njunkb += bsz
+    self._nbwb -= bsz
+
+    if self._brscache is not None :
+      (_, _, brssz) = self._brscache
+      (qbix, qsz, _) = self._bix2state.get(bix,
+                          coalesce_with_values= {BuckSt.TIDY, BuckSt.JUNK})
+      if qsz > brssz :
+        self._brscache = None
+
   def _free(self, eva) :
     if __debug__ : logging.debug(">_free eva=%x", eva)
     if self._paranoia > PARANOIA_STATE_PER_OPER : self._state_asserts()
@@ -475,7 +546,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
     if __debug__:
       (spanbase, spansize, spanst) = self._bix2state.get(bix)
       assert (spanst == BuckSt.BUMP) or (spanst == BuckSt.WAIT), \
-        "Attempting to free in non-BUMP/WAIT bucket"
+        ("Attempting to free in non-BUMP/WAIT bucket:", bix, spanst)
 
     (sz, bbm) = b
     if self._issmall(sz) :
@@ -504,10 +575,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
           ("Freeing bucket still registered as bump block", \
             bix, sz, self._bix2szbm[bix], self._szbix2ap.get(sz))
         assert spanst == BuckSt.WAIT, "Freeing bucket in non-WAIT state"
-        del self._bix2szbm[bix]
-        self._bix2state.mark(bix, 1, BuckSt.JUNK)
-        self._njunkb += 1
-        self._nbwb -= 1
+        self._mark_junk(bix, 1)
 
         # XXX At the moment, we only unmap when the entire bucket is free.
         # This is just nwf being lazy and not wanting to do the bit math for
@@ -527,11 +595,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
       assert spanbase <= bix and bix + bsz <= spanbase + spansize, \
         "Mismatched bucket states of large allocation"
 
-      del self._bix2szbm[bix]
-
-      self._njunkb += bsz
-      self._nbwb -= bsz
-      self._bix2state.mark(bix, bsz, BuckSt.JUNK)
+      self._mark_junk(bix, bsz)
       self._publish('unmapd', "---", self._bix2va(bix), self._bix2va(bix+bsz))
       self._try_revoke()
     if __debug__ : logging.debug("<_free eva=%x", eva)
