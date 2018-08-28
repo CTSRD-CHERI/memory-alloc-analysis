@@ -97,13 +97,9 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
 
   __metaclass__ = ABCMeta
 
-  def __init__(self, **kwargs):
-    super().__init__()
-
-    self._tslam = kwargs['tslam']
-
-# Argument parsing ---------------------------------------------------- {{{
-    argp = argparse.ArgumentParser()
+# Argument definition and response ------------------------------------ {{{
+  @staticmethod
+  def _init_add_args(argp) :
     argp.add_argument('--overhead-factor', action='store',
                       type=float, default=5)
     argp.add_argument('--tidy-factor', action='store',
@@ -115,8 +111,8 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
     argp.add_argument('--paranoia', action='store', type=int, default=0)
     argp.add_argument('--revoke-k', action='store', type=int, default=1)
     argp.add_argument('--revoke-min-time', action='store', type=float, default=0)
-    args = argp.parse_args(kwargs['cliargs'])
 
+  def _init_handle_args(self, args) :
     self._paranoia        = args.paranoia
     if self._paranoia == 0 and __debug__ :
         logging.warn("Assertions still enabled, even with paranoia 0; "
@@ -139,6 +135,20 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
         self._try_realloc = self._try_realloc_onlyshrink
     else:
         self._try_realloc = self._try_realloc_yes
+
+# --------------------------------------------------------------------- }}}
+
+  def __init__(self, **kwargs):
+    super().__init__()
+
+    self._tslam = kwargs['tslam']
+
+# Argument parsing ---------------------------------------------------- {{{
+
+    argp = argparse.ArgumentParser()
+    self._init_add_args(argp)
+    self._init_handle_args(argp.parse_args(kwargs['cliargs']))
+
 # --------------------------------------------------------------------- }}}
 
     # Power of two, greater than page log
@@ -290,11 +300,11 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
                   if v == BuckSt.JUNK]
         if js == [] : continue
 
+        # Sort spans by number of JUNK buckets, not JUNK|TIDY buckets
         nj = sum(js)
         if nj <= bests[0][0] : continue
-
-        # Sort spans by number of JUNK buckets, not JUNK|TIDY buckets
         insort(bests, (nj, (qbase, qsz)))
+
         bests = bests[(-n):]
 
     return bests
@@ -338,15 +348,28 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
 # --------------------------------------------------------------------- }}}
 # Allocation ---------------------------------------------------------- {{{
 
+  # Return the bucket index to use for a small placement of size `sz` and
+  # made by call stack `stk`.  Available options include the existing bump
+  # buckets `bbks` or the TIDY/AHWM segments indicated in `tidys`.  These
+  # last two parameters are Python iterators, not lists, to speed up the
+  # most common cases.  `tidys` is an iterator of (index, length) tuples,
+  # each indicating possibly multiple locations.
   @abstractmethod
-  def _alloc_place_small(self, stk, bbks, tidys) :
+  def _alloc_place_small(self, stk, sz, bbks, tidys) :
     raise NotImplemented()
 
+  # Some classes may be associating metadata with bump buckets.  This
+  # callback fires whenever a bump bucket fills, to indicate that no future
+  # allocations will take place from that bucket and so the metadata can be
+  # released.
   def _alloc_place_small_full(self, bbix) :
     pass
 
+  # Return the initial bucket index to use for a large allocation of `sz`
+  # *buckets* (not bytes).  `tidys` is, as with `_alloc_place_small`, an
+  # iterator of (index, length) pairs.
   @abstractmethod
-  def _alloc_place_large(self, stk, bbks, tidys) :
+  def _alloc_place_large(self, stk, sz, tidys) :
     raise NotImplemented()
 
   def _mark_allocated(self, reqbase, reqbsz, nst):
@@ -361,6 +384,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
 
     if reqbase > self._maxbix :
         # Allocation request leaving a gap; mark the skipped spans as TIDY
+        # rather than leaving them as AHWM.
         self._bix2state.mark(self._maxbix, reqbase - self._maxbix,
                              BuckSt.TIDY)
 
@@ -380,15 +404,15 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
       # Is small allocation
 
       # Is bump bucket available?
-      sz = self._szfix(sz)
-      bbs = self._szbix2ap.get(sz, {})
+      fsz = self._szfix(sz)
+      bbs = self._szbix2ap.get(fsz, {})
 
-      bbix = self._alloc_place_small(stk, iter(bbs.keys()), tidys)
+      bbix = self._alloc_place_small(stk, sz, iter(bbs.keys()), tidys)
       if bbix not in bbs :
         self._publish('mapd', stk, self._bix2va(bbix), self._bix2va(bbix+1))
         self._mark_allocated(bbix, 1, BuckSt.BUMP)
-        self._bix2szbm[bbix] = (sz, 0)
-        if sz not in self._szbix2ap : self._szbix2ap[sz] = {}
+        self._bix2szbm[bbix] = (fsz, 0)
+        if fsz not in self._szbix2ap : self._szbix2ap[fsz] = {}
         bbap = 0
       else :
         bbap = bbs[bbix]
@@ -396,24 +420,24 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
       if __debug__:
         # Some sanity-checking doesn't hurt, either.
         (bbsz, bbbm) = self._bix2szbm[bbix]
-        assert bbsz == sz, "Incorrect indexing of BUMP buckets"
+        assert bbsz == fsz, "Incorrect indexing of BUMP buckets"
         assert bbbm & (1 << bbap) == 0, "Attempting to BUMP into free object"
 
       bbap += 1
-      if bbap == self._maxoix(sz) :
+      if bbap == self._maxoix(fsz) :
         # out of room; can't bump this any more
-        del self._szbix2ap[sz][bbix]
+        del self._szbix2ap[fsz][bbix]
         self._bix2state.mark(bbix, 1, BuckSt.WAIT)
 
         # Inform the placement policy that this one is no-go and won't be
         # coming back, so it can stop tracking metadata about it.
         self._alloc_place_small_full(bbix)
       else :
-        assert bbap < self._maxoix(sz), "Allocation pointer beyond maximum"
+        assert bbap < self._maxoix(fsz), "Allocation pointer beyond maximum"
         # just revise allocation pointer
-        self._szbix2ap[sz][bbix] = bbap
+        self._szbix2ap[fsz][bbix] = bbap
 
-      res = self._bix2va(bbix) + (bbap-1)*sz
+      res = self._bix2va(bbix) + (bbap-1)*fsz
     else :
       # Large allocation.
 
