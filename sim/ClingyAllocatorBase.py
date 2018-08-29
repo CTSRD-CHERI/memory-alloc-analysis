@@ -83,18 +83,14 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
         '_bix2szbm',
         '_brscache',
         '_bucklog',
-        '_lastrevt',
         '_maxbix',
         '_njunkb',
         '_nbwb',
-        '_overhead_factor',
         '_pagelog',
         '_paranoia',
         '_revoke_k',
         '_revoke_t',
-        '_rev_tidy_factor',
         '_szbix2ap',
-        '_tidy_factor',
         '_tslam')
 
   __metaclass__ = ABCMeta
@@ -102,19 +98,11 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
 # Argument definition and response ------------------------------------ {{{
   @staticmethod
   def _init_add_args(argp) :
-    argp.add_argument('--rev-tidy-factor', action='store',
-                      type=float, default=8)
-    argp.add_argument('--overhead-factor', action='store',
-                      type=float, default=5)
-    argp.add_argument('--tidy-factor', action='store',
-                      type=int, default=1,
-                      help='Suppress revocation if sufficient TIDY')
     argp.add_argument('--realloc', action='store',
                       type=str, default="always",
                       choices=['always', 'yes', 'onlyshrink', 'never', 'no'])
     argp.add_argument('--paranoia', action='store', type=int, default=0)
     argp.add_argument('--revoke-k', action='store', type=int, default=1)
-    argp.add_argument('--revoke-min-time', action='store', type=float, default=0)
 
   def _init_handle_args(self, args) :
     self._paranoia        = args.paranoia
@@ -124,15 +112,8 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
     if self._paranoia != 0 and not __debug__ :
         raise ValueError("Paranoia without assertions will just be slow")
 
-    self._overhead_factor = args.overhead_factor
-    self._tidy_factor     = args.tidy_factor
-    self._rev_tidy_factor = args.rev_tidy_factor
-
     assert args.revoke_k > 0
     self._revoke_k        = args.revoke_k
-
-    assert args.revoke_min_time >= 0
-    self._revoke_t        = args.revoke_min_time * 1E9
 
     if args.realloc == "never" or args.realloc == "no" :
         self._try_realloc = self._try_realloc_never
@@ -159,8 +140,6 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
     # Power of two, greater than page log
     self._bucklog = 16
     self._pagelog = 12
-
-    self._lastrevt = 0  # Time of last revocation pass
 
     self._maxbix = 0    # Next never-touched bucket index (AHWM)
     self._szbix2ap = {} # BUMP allocation pointer by size and bix
@@ -285,6 +264,9 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
   # An actual implementation would maintain a prioqueue or something;
   # we can get away with a linear scan.
   def _find_largest_revokable_spans(self, n=1):
+    if n == 1 and self._brscache is not None :
+        return [self._brscache]
+
     # Exclude AHWM, which is like TIDY but would almost always be biggest
     okst = {BuckSt.TIDY, BuckSt.JUNK}
 
@@ -313,6 +295,11 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
 
         bests = bests[(-n):]
 
+    if bests == [] :
+        self._brscache = (0, -1, -1)
+    else :
+        self._brscache = bests[-1]
+
     return bests
 
   def _do_revoke(self, brss) :
@@ -340,63 +327,48 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
 
    self._lastrevt = self._tslam()
 
-  def _try_revoke(self) :
+  # Conditionally revokes the top n segments if the predicate, which is
+  # given the number of junk buckets in the largest span, says to.
+  def _predicated_revoke_best(self, fn, n=None):
+    if n is None :
+        n = self._revoke_k
+    nrev = None
+    brss = None
 
-    # Revoke only if all of
-
-    # we're above our permitted overhead factor (which is the ratio of BUMP|WAIT to JUNK buckets)
-    #
-    # we're above our inverse occupancy factor (which is the ratio of BUMP|WAIT to TIDY buckets)
-    #
-    # It's been more than N seconds since we last revoked
-    #
-    # Revoking now would grow TIDY by a sufficient quantity
-
-    ts = self._tslam()
-
-    ntidy = self._maxbix - self._njunkb - self._nbwb
-    if (     (self._njunkb >= self._overhead_factor * self._nbwb)
-         and (self._nbwb >= self._tidy_factor * ntidy)
-         and (ts - self._lastrevt >= self._revoke_t)
-       ):
-
-        nrev = None
-        brss = None
-
-        if self._brscache is not None :
-            # If the best revocable span is cached, just exract the answer
-            (nrev, _, _) = self._brscache
+    if self._brscache is not None :
+        # If the best revocable span is cached, just exract the answer
+        (nrev, _, _) = self._brscache
+    else :
+        # Otherwise, answer is not cached, so go compute it now.
+        # Compute one more so we can update the cache immediately.
+        brss = self._find_largest_revokable_spans(n=n + 1)
+        if brss == [] :
+            self._brscache = (0, -1, -1)
         else :
-            # Otherwise, answer is not cached, so go compute it now.
-            # Compute one more so we can update the cache immediately.
-            brss = self._find_largest_revokable_spans(n=self._revoke_k + 1)
+            self._brscache = brss[-1]
+        nrev = self._brscache[2]
 
-            if brss == [] :
-                nrev = 0
-                self._brscache = (0, -1, -1)
-            else :
-                nrev = brss[-1][2]
-                # If we end up not revoking, extract the largest entry
-                self._brscache = brss[-1]
+    if fn(nrev) :
+      # Revoking the top k spans means that the (k+1)th span is
+      # certainly the most productive, in terms of the number of JUNK
+      # buckets it contains.  Immediately update the cache to avoid
+      # needing another sweep later.
+      if brss is None :
+        brss = self._find_largest_revokable_spans(n=n + 1)
+      if len(brss) > n :
+          (brss, self._brscache) = (brss[1:], brss[:1][0])
+      else :
+          self._brscache = (0, -1, -1)
 
-        if ntidy < self._rev_tidy_factor * nrev :
-            # If we got nrev out of cache, we need the actual answer now
-            if brss is None :
-                brss = self._find_largest_revokable_spans(n=self._revoke_k + 1)
-
-            assert brss[-1][0] == nrev, \
+      assert brss[-1][0] == nrev, \
                 ("Incorrect accounting in cache?", brss, nrev, self._brscache)
 
-            # Revoking the top k spans means that the (k+1)th span is
-            # certainly the most productive, in terms of the number of JUNK
-            # buckets it contains.  Immediately update the cache to avoid
-            # needing another sweep later.
-            if len(brss) > self._revoke_k :
-                (brss, self._brscache) = (brss[1:], brss[:1][0])
-            else :
-                self._brscache = (0, -1, -1)
+      self._do_revoke(brss)
 
-            self._do_revoke(brss)
+  @abstractmethod
+  def _maybe_revoke(self) :
+    # By default, don't!
+    pass
 
 # --------------------------------------------------------------------- }}}
 # Allocation ---------------------------------------------------------- {{{
@@ -513,7 +485,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
       res = self._bix2va(bbix)
       self._publish('mapd', "---", res, res + self._nbucks2sz(bsz))
 
-    self._try_revoke()
+    self._maybe_revoke()
     if __debug__ : logging.debug("<_alloc eva=%x", res)
     return res
 
@@ -582,7 +554,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
         # page-at-a-time release.
         self._publish('unmapd', "---", self._bix2va(bix), self._bix2va(bix+1))
 
-        self._try_revoke()
+        self._maybe_revoke()
       else :
         # Just update
         self._bix2szbm[bix] = (sz, bbm)
@@ -597,7 +569,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
 
       self._mark_junk(bix, bsz)
       self._publish('unmapd', "---", self._bix2va(bix), self._bix2va(bix+bsz))
-      self._try_revoke()
+      self._maybe_revoke()
     if __debug__ : logging.debug("<_free eva=%x", eva)
 
 # --------------------------------------------------------------------- }}}
