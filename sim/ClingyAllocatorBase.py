@@ -45,34 +45,47 @@ class BuckSt(Enum):
 #
 #     If the allocation is "large", then we must find several TIDY or AHWM
 #     buckets to back it.  These buckets are immediately transitioned to
-#     WAIT state and are MAPPED.
+#     WAIT state and are MAPPED.  See _alloc_place_large().
 #
 #     If there already exists a bucket for this allocation size in BUMP
-#     state, bump its allocation pointer to service the new allocation.
-#     If this fills the bucket, transition it to WAIT state, otherwise,
-#     leave it in BUMP state.
+#     state, we *may* bump its allocation pointer to service the new
+#     allocation.  There may be several open BUMP buckets for any given
+#     size.  See _alloc_place_small().  If this fills the bucket, transition
+#     it to WAIT state (see _alloc_place_small_full), otherwise, leave it in
+#     BUMP state.
 #
 #     Otherwise, find a TIDY or AHWM bucket and transition it to BUMP state,
 #     setting its size, seeding its initial bitmap, and marking its pages
 #     as MAPPED.  AHWM buckets come from beyond our maximum allocated
 #     address and TIDY buckets from a reused bucket below that address, based
-#     on some permitted "slop" threshold.
+#     on some permitted "slop" threshold.  See, again, _alloc_place_small().
 #
 #   When a free arrives, there are several cases as well:
 #
-#     If the target is a large object, transition all backing buckets to
-#     JUNK state and UNMAP them.
+#     If the target is a large object, transition all backing buckets from
+#     WAIT to JUNK state and UNMAP them.
 #
 #     Otherwise, set the bit in the bucket's bitmap.
+#
 #       If the page's bitmap is now full, UNMAP it. (XXX not yet)
-#       If the bucket's bitmap is full, transition the bucket to JUNK.
+#
+#       If the bucket's bitmap is full, transition the bucket to JUNK
+#       (necessarily from WAIT).
 #
 #   A free might also cause us to cross our "slop" threshold; if so, we
-#   will engage in one round of revocation of the largest contiguous block
-#   of JUNK or TIDY space, moving all blocks therein to TIDY.  (The
-#   re-revocation of TIDY space may be surprising, but this reduces the
-#   pathology of interdigitated JUNK and TIDY causing many small
-#   revocations)
+#   will engage in one round of revocation, moving as many JUNK buckets
+#   as possible into TIDY.  To avoid the pathology of interdigitated JUNK
+#   and TIDY spans of buckets causing many small revocations, we will
+#   permit re-revocation of TIDY buckets, but only if the revocation
+#   continues to maximize the number of JUNK buckets transitioning.
+
+bst2color = {
+    BuckSt.AHWM : 0x000000, # black
+    BuckSt.TIDY : 0xFFFFFF, # white
+    BuckSt.BUMP : 0x0000FF, # red
+    BuckSt.WAIT : 0xFF0000, # blue
+    BuckSt.JUNK : 0x00FF00, # green
+}
 
 # --------------------------------------------------------------------- }}}
 
@@ -410,9 +423,15 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
     if reqbase > self._maxbix :
         # Allocation request leaving a gap; mark the skipped spans as TIDY
         # rather than leaving them as AHWM.
+        #
+        # While this might, technically, change the largest revokable span,
+        # it will not change the number of JUNK buckets in any span, and so
+        # we need not necessarily invalidate brscache.
         self._bix2state.mark(self._maxbix, reqbase - self._maxbix,
                              BuckSt.TIDY)
 
+    # If the allocation takes place within the current best revokable span,
+    # invalidate the cache and let the revocation heuristic reconstruct it.
     if self._brscache is not None :
       (_, brsix, brssz) = self._brscache
       if brsix <= reqbase < brsix + brssz :
@@ -492,6 +511,19 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
 # --------------------------------------------------------------------- }}}
 # Free ---------------------------------------------------------------- {{{
 
+  # Mark a (span of) bucket(s) JUNK.
+  #
+  # This may change the largest revocable span, so carry out a single probe
+  # of the state intervalmap to see.  Do not attempt to revise the cache
+  # here, as that would require counting up the number of JUNK pages in the
+  # span returned; just invalidate it and let the revocation heuristic
+  # recompute it when needed.
+  #
+  # It may make sense to hook this method in subclasses, too, for further
+  # metadata management, especially if we end up designing a "related
+  # object" API extension: one may need to refer to metadata of objects
+  # whose buckets have already gone from BUMP to BUSY, i.e., for which
+  # _alloc_place_small_full() has already been called.
   def _mark_junk(self, bix, bsz) :
     del self._bix2szbm[bix]
     self._bix2state.mark(bix, bsz, BuckSt.JUNK)
@@ -500,7 +532,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
 
     if self._brscache is not None :
       (_, _, brssz) = self._brscache
-      (qbix, qsz, _) = self._bix2state.get(bix,
+      (_, qsz, _) = self._bix2state.get(bix,
                           coalesce_with_values= {BuckSt.TIDY, BuckSt.JUNK})
       if qsz > brssz :
         self._brscache = None
@@ -665,6 +697,22 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
     # call down anyway
 
     return False
+
+# --------------------------------------------------------------------- }}}
+# Rendering ----------------------------------------------------------- {{{
+
+  def render(self, img) :
+    from common.render import renderSpans
+    from PIL import ImageDraw
+    renderSpans(img,
+        ((loc, sz, bst2color[st]) for (loc, sz, st) in self._bix2state))
+    if self._brscache is not None :
+        (_, brsloc, brssz) = self._brscache
+        renderSpans(img, [(brsloc, brssz, 0x00FFFF)])
+    else :
+        brss = self._find_largest_revokable_spans(n=1)
+        if brss != [] and brss[0][1] is not None :
+            renderSpans(img, [(brss[0][1], brss[0][2], 0x00FFFF)])
 
 # --------------------------------------------------------------------- }}}
 

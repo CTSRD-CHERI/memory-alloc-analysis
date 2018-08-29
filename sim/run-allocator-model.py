@@ -36,6 +36,9 @@ argp.add_argument("--log-level", help="Set the logging level",
 argp.add_argument('--stdouterr', help='Equate sys.stdout and sys.stderr',
                   action='store_const', const=True, default=False)
 
+argp.add_argument('--render-freq', action='store', type=int, default=None)
+argp.add_argument('--render-dir', action='store', type=str, default="./tmp")
+
 argp.add_argument('remainder', nargs=argparse.REMAINDER,
                   help="Arguments fed to allocator model")
 args = argp.parse_args()
@@ -75,5 +78,28 @@ unrun = Unrun(tslam, out=sys.stdout)
 run.register_trace_listener(alloc)
 run.register_addr_space_sample_listener(alloc)
 alloc.register_subscriber( unrun )
+
+if (args.render_freq is not None):
+  if getattr(alloc,'render',None) is None :
+    print("Allocator lacks renderer.", file=sys.stderr)
+    sys.exit(1)
+
+  from PIL import Image
+
+  class RenderTraceListener:
+    __slots__ = ('count')
+    def __init__(self) :
+      self.count = 0
+    def _common(self) :
+      if self.count % args.render_freq == 0 :
+        img = Image.new('RGB', (500,500))
+        alloc.render(img)
+        img.save("%s/%s.png" % (args.render_dir, run.timestamp_ns))
+      self.count += 1
+    def allocd(self,*a) : self._common()
+    def freed(self,*a) : self._common()
+    def reallocd(self,*a) : self._common()
+
+  run._trace_listeners += [ RenderTraceListener() ]
 
 run.replay()
