@@ -22,3 +22,31 @@ def renderSpans(img, it) :
             imgd.line([(0,fpy), (fpx,fpy)], fill=c)
             if fpy > ipy+1 :
                 imgd.rectangle([(0,ipy+1),(szx,fpy-1)], fill=c)
+
+# Like the above, but uses a Z-order curve of horizontal size 2**p2.
+def renderSpansZ(img, p2, it) :
+    assert p2 <= 32, "Z-order too big"
+
+    imgd = ImageDraw.Draw(img)
+    botmask = (1 << (2 * p2)) - 1
+
+    for (b, sz, c) in it :
+        # We could surely do better, but this suffices for now
+        for loc in range(b, b+sz) :
+            bot = loc & botmask
+            top = (loc >> (2 * p2)) << p2
+
+            # Z slice
+            x = bot            & 0x55555555
+            x = (x | (x >> 1)) & 0x33333333
+            x = (x | (x >> 2)) & 0x0f0f0f0f
+            x = (x | (x >> 4)) & 0x00ff00ff
+            x = (x | (x >> 8)) & 0x0000ffff
+
+            y = (bot >> 1)     & 0x55555555
+            y = (y | (y >> 1)) & 0x33333333
+            y = (y | (y >> 2)) & 0x0f0f0f0f
+            y = (y | (y >> 4)) & 0x00ff00ff
+            y = (y | (y >> 8)) & 0x0000ffff
+
+            imgd.point([x, top+y], fill=c)

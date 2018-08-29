@@ -702,17 +702,17 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
 # Rendering ----------------------------------------------------------- {{{
 
   def render(self, img) :
-    from common.render import renderSpans
+    from common.render import renderSpansZ
     from PIL import ImageDraw
-    renderSpans(img,
-        ((loc, sz, bst2color[st]) for (loc, sz, st) in self._bix2state))
+    renderSpansZ(img, 256,
+        ((loc, sz, bst2color[st]) for (loc, sz, st) in self._bix2state if st != BuckSt.AHWM))
     if self._brscache is not None :
         (_, brsloc, brssz) = self._brscache
-        renderSpans(img, [(brsloc, brssz, 0x00FFFF)])
+        renderSpansZ(img, 256, [(brsloc, brssz, 0x00FFFF)])
     else :
         brss = self._find_largest_revokable_spans(n=1)
         if brss != [] and brss[0][1] is not None :
-            renderSpans(img, [(brss[0][1], brss[0][2], 0x00FFFF)])
+            renderSpansZ(img, 256, [(brss[0][1], brss[0][2], 0x00FFFF)])
 
 # --------------------------------------------------------------------- }}}
 
