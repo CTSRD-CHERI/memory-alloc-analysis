@@ -421,6 +421,8 @@ class CompactingSweepingRevoker(BaseSweepingRevoker):
 
 class BaseOutput:
     def __init__(self, file):
+        if isinstance(file, str):
+            file = open(file, 'w')
         self._file = file
 
     def rate_limited_runms(call_period_ms):
@@ -437,23 +439,30 @@ class BaseOutput:
     def update(self):
         raise NotImplementedError
 
+    def end(self):
+        self._file.close()
+
 
 class CompositeOutput(BaseOutput):
-    def __init__(self, file, *outputs):
-        super().__init__(file)
+    def __init__(self, *outputs):
+        super().__init__(None)
         self._outputs = outputs
 
     def update(self):
         for o in self._outputs:
             o.update()
 
+    def end(self):
+        for o in self._outputs:
+            o.end()
+
 
 class GraphOutput(BaseOutput):
     def __init__(self, file):
         super().__init__(file)
-        self._print_header()
+        self._output_header()
 
-    def _print_header(self):
+    def _output_header(self):
         print('#{0}\t{1}\t{2}\t{3}\t{4}\t{5}\t{6}\t{7}'.format('timestamp-unix-ns', 'addr-space-total-b',
               'addr-space-sweep-b', 'allocator-mapped-b', 'allocator-allocd-b', 'sweeps', 'swept-b',
               'swept-intervals'), file=self._file)
@@ -474,14 +483,15 @@ class AllocationMapOutput(BaseOutput, AllocatedAddrSpaceModelSubscriber):
     def __init__(self, *args):
         super().__init__(*args)
         self._addr_ivals_reused = IntervalTree()
+        alloc_state.register_subscriber(self)
 
 
     def reused(self, alloc_state, begin, end):
         self._addr_ivals_reused.add(AddrIval(begin, end, None))
 
 
-    # XXX-LPT _print_header
-    #def _print_header(self)
+    # XXX-LPT _output_header
+    #def _output_header(self)
 
 
     @BaseOutput.rate_limited_runms(100)
@@ -572,36 +582,11 @@ else:
 # Set up the output
 output = GraphOutput(sys.stdout)
 if args.allocation_map_output:
-    map_output_file = open(args.allocation_map_output, 'w')
-    alloc_map_output = AllocationMapOutput(map_output_file)
-    output = CompositeOutput(None, output, alloc_map_output)
-    alloc_state.register_subscriber(alloc_map_output)
+    alloc_map_output = AllocationMapOutput(args.allocation_map_output)
+    output = CompositeOutput(output, alloc_map_output)
 run = Run(sys.stdin,
           trace_listeners=[alloc_state, addr_space, alloc_addr_space, revoker],
           addr_space_sample_listeners=[addr_space, ])
 run.replay()
-output.update()  # ensure at least one line of output
-if args.allocation_map_output:
-    map_output_file.close()
-
-'''
-print('----', file=sys.stdout)
-print('{0} swept {1}GB in {2} sweeps in a {3}s run trace\n'
-      .format(type(revoker).__name__, revoker.swept_gb, len(revoker.sweeps), run.duration // 10**9), file=sys.stdout)
-
-print('                          Sweep amount per time until next sweep', file=sys.stdout)
-sweeps_sweep_per_s = [(s // (t2 - t1)) * 10**9 for (t1, s), (t2, _) in zip(revoker.sweeps, revoker.sweeps[1:]) if t2 - t1 > 0]
-bins_gb = (0, 1, 2, 4, 8, 16, 32, 64)
-# XXX-LPT do the returned bins match bins_gb?
-freqs, bins = numpy.histogram(sweeps_sweep_per_s, bins=[g * 2**30 for g in bins_gb])
-for bin_low, bin_high, freq in zip(bins_gb, bins_gb[1:], freqs):
-    print('{0:2} - {1:2} GB/s  | {2:<50} {3}'.format(bin_low, bin_high, '=' * int((freq / len(sweeps_sweep_per_s)) * 50),
-          freq), file=sys.stdout)
-
-print('                                  Sweep amount histogram', file=sys.stdout)
-bins_mb = (0, 64, 128, 256, 512, 1024, 2048, 4096, 8192)
-freqs, bins = numpy.histogram(revoker.sweeps, bins=[m * 2**20 for m in bins_mb])
-for bin_low, bin_high, freq in zip(bins_mb, bins_mb[1:], freqs):
-    print('{0:4} - {1:4} MB  | {2:<50} {3}'.format(bin_low, bin_high, '=' * int((freq / len(revoker.sweeps)) * 50),
-          freq), file=sys.stdout)
-'''
+output.update()  # ensure at least one output update
+output.end()
