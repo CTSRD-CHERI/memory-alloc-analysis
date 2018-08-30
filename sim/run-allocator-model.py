@@ -72,8 +72,8 @@ alloc = allocmod.Allocator(tslam=tslam, cliargs=args.remainder)
 
 unrun = Unrun(tslam, out=sys.stdout)
  
-run._trace_listeners += [ alloc ]
-run._addr_space_sample_listeners += [ alloc ]
+run.register_trace_listener(alloc)
+run.register_addr_space_sample_listener(alloc)
 alloc.register_subscriber( unrun )
 
 run.replay()

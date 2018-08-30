@@ -549,12 +549,40 @@ class AllocationMapOutput(BaseOutput, AllocatedAddrSpaceModelSubscriber):
         return chunk_stat
 
 
+class SweepEventsOutput(BaseOutput):
+    def __init__(self, file):
+        super().__init__(file)
+        self._alloc_api_calls = 0
+        self._revoker_state_last = revoker.swept
+
+        self._output_header()
+        run.register_trace_listener(self)
+
+    def allocd(self, *args):
+        self._alloc_api_calls += 1
+    def reallocd(self, *args):
+        self._alloc_api_calls += 1
+    def freed(self, *args):
+        self._alloc_api_calls += 1
+
+    def _output_header(self):
+        print('#{0}\t{1}'.format('eventstamp-alloc-api-calls-malloc-calloc-aligned_alloc-posix_memalign-realloc-free',
+              'sweep-amount-b'), file=self._file)
+
+    def update(self):
+        if self._revoker_state_last != revoker.swept:
+            sweep = revoker.swept - self._revoker_state_last
+            print('{0}\t{1}'.format(self._alloc_api_calls, sweep), file=self._file)
+            self._revoker_state_last = revoker.swept
+
+
 # Parse command line arguments
 argp = argparse.ArgumentParser(description='Model allocation from a trace and output various measurements')
 argp.add_argument("--log-level", help="Set the logging level.  Defaults to CRITICAL",
                   choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
                   default="CRITICAL")
 argp.add_argument("--allocation-map-output", help="Output file for the allocation map (disabled by default)")
+argp.add_argument("--sweep-events-output", help="Output file for the sweep-triggering events (disabled by default)")
 argp.add_argument('revoker', nargs='?', default='CompactingSweepingRevoker',
                   help="Select the revoker type, or 'account' to assume error-free trace and speed up the"
                   " stats gathering.  Revoker types: NaiveSweepingRevokerN, CompactingSweepingRevokerN,"
@@ -579,14 +607,21 @@ else:
     revoker = revoker_cls(*(m.group(2),) if m.group(2) is not None else (1024,))
     alloc_state.register_subscriber(revoker)
 
+# Set up the input processing
+run = Run(sys.stdin,
+          trace_listeners=[alloc_state, addr_space, alloc_addr_space, revoker],
+          addr_space_sample_listeners=[addr_space, ])
+
 # Set up the output
 output = GraphOutput(sys.stdout)
 if args.allocation_map_output:
     alloc_map_output = AllocationMapOutput(args.allocation_map_output)
     output = CompositeOutput(output, alloc_map_output)
-run = Run(sys.stdin,
-          trace_listeners=[alloc_state, addr_space, alloc_addr_space, revoker],
-          addr_space_sample_listeners=[addr_space, ])
+if args.sweep_events_output:
+    sweep_events_output = SweepEventsOutput(args.sweep_events_output)
+    run.register_trace_listener(sweep_events_output)
+    output = CompositeOutput(output, sweep_events_output)
+
 run.replay()
 output.update()  # ensure at least one output update
 output.end()
