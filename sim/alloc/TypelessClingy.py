@@ -1,4 +1,5 @@
 import argparse
+import itertools
 
 from sim.ClingyAllocatorBase import ClingyAllocatorBase
 
@@ -7,6 +8,7 @@ class Allocator(ClingyAllocatorBase):
   __slots__ = (
      '_lastrevt',
      '_overhead_factor',
+     '_rev_lru',
      '_revoke_t',
      '_rev_tidy_factor',
      '_tidy_factor',
@@ -24,6 +26,7 @@ class Allocator(ClingyAllocatorBase):
                       type=int, default=1,
                       help='Suppress revocation if sufficient TIDY')
     argp.add_argument('--revoke-min-time', action='store', type=float, default=0)
+    argp.add_argument('--revoke-lru', action='store', type=int, default=0)
 
     # Placement policy
     argp.add_argument('--best-fit', action='store_const',
@@ -36,6 +39,7 @@ class Allocator(ClingyAllocatorBase):
     self._rev_tidy_factor = args.rev_tidy_factor
     assert args.revoke_min_time >= 0
     self._revoke_t        = args.revoke_min_time * 1E9
+    self._rev_lru         = args.revoke_lru
 
     self._lastrevt = 0  # Time of last revocation pass
 
@@ -60,7 +64,9 @@ class Allocator(ClingyAllocatorBase):
          and (ts - self._lastrevt >= self._revoke_t)
        ):
 
-        self._predicated_revoke_best(lambda nrev : ntidy < self._rev_tidy_factor * nrev)
+        self._predicated_revoke_best(lambda nrev : ntidy < self._rev_tidy_factor * nrev,
+                revoke=map(lambda x : x[0], itertools.islice(self._junklst, self._rev_lru)))
+        self._lastrevt = self._tslam()
 
   def _alloc_place_small(self, stk, sz, bbks, tidys) :
     try :
