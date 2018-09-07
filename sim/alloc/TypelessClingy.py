@@ -65,7 +65,7 @@ class Allocator(ClingyAllocatorBase):
        ):
 
         self._predicated_revoke_best(lambda nrev : ntidy < self._rev_tidy_factor * nrev,
-                revoke=map(lambda x : x[0], itertools.islice(self._junklst, self._rev_lru)))
+                revoke=map(lambda x : x[0], itertools.islice(self._junklru, self._rev_lru)))
         self._lastrevt = self._tslam()
 
   def _alloc_place_small(self, stk, sz, bbks, tidys) :

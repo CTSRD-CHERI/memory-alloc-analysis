@@ -14,7 +14,7 @@ from pyllist import dllist
 import sys
 
 from common.intervalmap import IntervalMap
-from common.misc import Publisher
+from common.misc import Publisher, dll_im_coalesced_insert
 from sim.RenamingAllocatorBase import RenamingAllocatorBase
 
 # Various symbolic names for paranoia levels
@@ -104,7 +104,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
         '_bix2szbm',
         '_brscache',
         '_bucklog',
-        '_junklst',
+        '_junklru',
         '_junkbdn',
         '_maxbix',
         '_njunkb',
@@ -171,7 +171,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
     self._bix2state = IntervalMap(0, 2**(64 - self._bucklog), BuckSt.AHWM)
     self._brscache = None   # Biggest revokable span cache
 
-    self._junklst = dllist()    # List of all revokable spans, LRU
+    self._junklru = dllist()    # List of all revokable spans, LRU
     self._junkbdn = {}          # JUNK bix to node in above list
 
 # --------------------------------------------------------------------- }}}
@@ -286,7 +286,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
     # Ensure that JUNK states are in list, and vice versa
     for b in [l for (l,_,v) in self._bix2state if v == BuckSt.JUNK] :
         assert self._junkbdn.get(b,None) is not None, "JUNK not on LRU"
-    for (jb, jsz) in self._junklst :
+    for (jb, jsz) in self._junklru :
         (qb, qsz, qv) = self._bix2state[jb]
         assert qv == BuckSt.JUNK, "LRU not JUNK"
         assert qb == jb and qsz == jsz, "LRU JUNK segment botch"
@@ -295,7 +295,9 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
 # Revocation logic ---------------------------------------------------- {{{
 
   # An actual implementation would maintain a prioqueue or something;
-  # we can get away with a linear scan.
+  # we can get away with a linear scan.  We interrogate the bucket state
+  # interval map for ease of coalescing, even though we also maintain a
+  # parallel JUNK LRU queue.
   def _find_largest_revokable_spans(self, n=1):
     if n == 0 : return
     if n == 1 and self._brscache is not None :
@@ -344,7 +346,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
     # several JUNK spans in here.  Go remove all of them from the LRU.
     for (qbix, qsz, qv) in self._bix2state[bix:bix+sz] :
       assert qv in st_atj, "Revoking non-revokable span"
-      if qv == BuckSt.JUNK : self._junklst.remove(self._junkbdn.pop(qbix))
+      if qv == BuckSt.JUNK : self._junklru.remove(self._junkbdn.pop(qbix))
 
     self._njunkb -= nj
     self._bix2state.mark(bix,sz,BuckSt.TIDY)
@@ -597,14 +599,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
       if qsz >= brsnj :
         self._brscache = None
 
-    (qbix, qsz, _) = self._bix2state[bix]
-    if qbix != bix :
-        # Coalesced left; remove from list
-        self._junklst.remove(self._junkbdn.pop(qbix))
-    if qbix + qsz > bix + bsz :
-        # Coalesced right; remove from list
-        self._junklst.remove(self._junkbdn.pop(bix+bsz))
-    self._junkbdn[qbix] = self._junklst.insert(qbix)
+    dll_im_coalesced_insert(bix,bsz,self._bix2state,self._junklru,self._junkbdn)
 
   def _free(self, eva) :
     if __debug__ : logging.debug(">_free eva=%x", eva)
@@ -782,7 +777,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
         brss = self._find_largest_revokable_spans(n=1)
         if brss != [] and brss[0][1] is not None :
             renderSpansZ(img, 18, [(brss[0][1], brss[0][2], cBRS)])
-    oldestj = self._junklst.first
+    oldestj = self._junklru.first
     if oldestj is not None :
         (qbix, qsz, _) = self._bix2state.get(oldestj.value, coalesce_with_values=st_tj)
         renderSpansZ(img, 18, [(qbix, qsz, cOJS)])
