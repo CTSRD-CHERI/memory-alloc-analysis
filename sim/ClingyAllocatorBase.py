@@ -235,41 +235,57 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
     assert mbase + msz == 2**(64 - self._bucklog), ("maxbix not max", self._maxbix, mbase, msz, mv)
     assert mv == BuckSt.AHWM, ("maxbix not AHWM", self._maxbix, mbase, msz, mv)
 
+    (njunk, ntidy) = (0, 0)
+    for (qb, qsz, qv) in self._bix2state :
+        if qv == BuckSt.JUNK :
+            # Ensure presence on linked list
+            assert self._junkbdn.get(qb,None) is not None, "JUNK not on LRU"
+            # Account
+            njunk += qsz
+        elif qv == BuckSt.TIDY :
+            # Account
+            ntidy += qsz
+        elif qv == BuckSt.BUMP :
+            # Ensure that BUMP states are backed in dictionaries
+            for bc in range(qb,qb+qsz):
+                (bsz, _) = self._bix2szbm[bc]
+                assert self._szbix2ap.get(bsz) is not None, \
+                    ("BUMP miss sz", bc, bsz, self._state_diag())
+                assert self._szbix2ap[bsz][bc] is not None, \
+                    ("BUMP miss ix", bc, bsz, self._state_diag())
+        elif qv == BuckSt.WAIT :
+            # Same for WAIT states.  Not all WAIT-state buckets are
+            # necessarily indexed, tho', so we have to be somewhat careful
+            bc = qb
+            bce = qb + qsz
+            while bc < bce:
+                assert self._bix2szbm.get(bc) is not None, \
+                    ("B/W miss", bc, self._state_diag())
+                (bsz, _) = self._bix2szbm[bc]
+                bc += self._sz2nbucks(bsz)
+
     # Check that our running sum of JUNK pages is correct
-    njunk = sum([sz for (_, sz, v) in self._bix2state if v == BuckSt.JUNK])
     assert self._njunkb == njunk, "JUNK accounting botch"
 
-    nbw = sum([self._sz2nbucks(self._bix2szbm[b][0]) for b in self._bix2szbm])
+    nbw = 0
+    for b in self._bix2szbm :
+        # All busy buckets are marked as such?
+        (_, _, v) = self._bix2state[b]
+        assert v in [BuckSt.BUMP, BuckSt.WAIT], ("B/W botch", bc, v, \
+                    self._state_diag())
+
+        # Account
+        nbw += self._sz2nbucks(self._bix2szbm[b][0])
+
     assert self._nbwb == nbw, \
             ("BUMP|WAIT accounting botch", nbw, self._nbwb,
               self._bix2szbm.keys(), [x for x in self._bix2state])
 
     # Everything adds up, right?
-    ntidy = sum([sz for (_,sz,v) in self._bix2state if v == BuckSt.TIDY])
     #      non-AHWM         JUNK         BUMP|WAIT      TIDY
     assert self._maxbix == self._njunkb + self._nbwb  + ntidy, \
            ("General accounting botch", self._maxbix, self._njunkb,
              self._bix2szbm.keys(), [x for x in self._bix2state])
-
-    # Ensure that BUMP states are backed in dictionaries
-    for b in [(l,sz) for (l,sz,v) in self._bix2state if v == BuckSt.BUMP] :
-        for bc in range(b[0],b[0]+b[1]):
-            (bsz, _) = self._bix2szbm[bc]
-            assert self._szbix2ap.get(bsz) is not None, \
-                ("BUMP miss sz", bc, bsz, self._state_diag())
-            assert self._szbix2ap[bsz][bc] is not None, \
-                ("BUMP miss ix", bc, bsz, self._state_diag())
-
-    # Same for WAIT states.  Not all WAIT-state buckets are necessarily indexed,
-    # tho', so we have to be somewhat careful
-    for b in [(l,sz) for (l,sz,v) in self._bix2state if v == BuckSt.WAIT] :
-        bc = b[0]
-        bce = b[0] + b[1]
-        while bc < bce:
-            assert self._bix2szbm.get(bc) is not None, \
-                ("B/W miss", bc, self._state_diag())
-            (bsz, _) = self._bix2szbm[bc]
-            bc += self._sz2nbucks(bsz)
 
     # Every currently-active BUMP bucket is tagged as such, yes?
     for sz in self._szbix2ap :
@@ -277,15 +293,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
         (_, _, v) = self._bix2state[bc]
         assert v == BuckSt.BUMP, ("BUMP botch", bc, v, self._state_diag())
 
-    # All busy buckets are marked as such?
-    for bc in self._bix2szbm :
-        (_, _, v) = self._bix2state[bc]
-        assert v in [BuckSt.BUMP, BuckSt.WAIT], ("B/W botch", bc, v, \
-                    self._state_diag())
-
-    # Ensure that JUNK states are in list, and vice versa
-    for b in [l for (l,_,v) in self._bix2state if v == BuckSt.JUNK] :
-        assert self._junkbdn.get(b,None) is not None, "JUNK not on LRU"
+    # Ensure that JUNK list entries are so stated
     for (jb, jsz) in self._junklru :
         (qb, qsz, qv) = self._bix2state[jb]
         assert qv == BuckSt.JUNK, "LRU not JUNK"
