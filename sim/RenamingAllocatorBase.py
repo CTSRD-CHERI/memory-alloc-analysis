@@ -81,7 +81,7 @@ class RenamingAllocatorBase (Publisher):
   # order, we are only out to model allocator placements, and can
   # synthesize our own map and unmap events, don't pass these further
   # along the pipeline.
-  def mapd(self, stk, begin, end):
+  def mapd(self, stk, begin, end, prot):
     pass
 
   def unmapd(self, stk, begin, end):
