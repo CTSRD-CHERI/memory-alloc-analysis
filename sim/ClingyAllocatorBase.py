@@ -2,6 +2,10 @@
 
 # Cling-inspired allocator model.  Buckets allocations below some threshold,
 # with a bump-the-pointer allocator for each.
+#
+# See
+# https://www.usenix.org/conference/usenixsecurity10/cling-memory-allocator-mitigate-dangling-pointers
+# for more information about Cling.
 
 # Preamble and global parameters -------------------------------------- {{{
 
@@ -10,6 +14,7 @@ import argparse
 from bisect import insort
 from enum import Enum, unique
 import logging
+from math import ceil
 from pyllist import dllist
 import sys
 
@@ -89,8 +94,8 @@ bst2color = {
     BuckSt.AHWM : 0x000000, # black (unused)
     BuckSt.TIDY : 0xFFFFFF, # white
     BuckSt.BUMP : 0x0000FF, # red
-    BuckSt.WAIT : 0xFF0000, # blue
-    BuckSt.JUNK : 0x00FF00, # green
+    BuckSt.WAIT : 0x00FF00, # green
+    BuckSt.JUNK : 0xFF0000, # blue
 }
 cBRS = 0x00FFFF # yellow
 cOJS = 0xFF00FF # purple
@@ -339,17 +344,17 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
 
     return bests
 
-  def _do_revoke(self, brss) :
+  def _do_revoke(self, ss) :
    if self._paranoia > PARANOIA_STATE_ON_REVOKE : self._state_asserts()
 
-   nrev = sum([nj for (nj, _, _) in brss if nj > 0])
+   nrev = sum([nj for (nj, _, _) in ss if nj > 0])
    ntidy = self._maxbix - self._njunkb - self._nbwb
-   print("Revoking: ts=%.2f hwm=%d busy=%d junk=%d tidy=%d rev=%d rev/hwm=%2.2f%% rev/junk=%2.2f%% brss=%r" \
+   print("Revoking: ts=%.2f hwm=%d busy=%d junk=%d tidy=%d rev=%d rev/hwm=%2.2f%% rev/junk=%2.2f%% ss=%r" \
          % (self._tslam() / 1e9, self._maxbix, self._nbwb, self._njunkb, ntidy,
-            nrev, nrev/self._maxbix * 100, nrev/self._njunkb * 100, brss),
+            nrev, nrev/self._maxbix * 100, nrev/self._njunkb * 100, ss),
          file=sys.stderr)
 
-   for (nj, bix, sz) in brss :
+   for (nj, bix, sz) in ss :
     # Because we coalesce with TIDY spans while revoking, there may be
     # several JUNK spans in here.  Go remove all of them from the LRU.
     for (qbix, qsz, qv) in self._bix2state[bix:bix+sz] :
@@ -360,7 +365,9 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
     self._bix2state.mark(bix,sz,BuckSt.TIDY)
 
    self._publish('revoked', "---",
-      [(self._bix2va(bix), self._bix2va(bix+sz)) for (_, bix, sz) in brss])
+      [(self._bix2va(bix), self._bix2va(bix+sz)) for (_, bix, sz) in ss])
+
+   self._brscache = None
 
 
   # Conditionally revokes the top n segments if the predicate, which is
@@ -372,7 +379,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
   # of reuse of small spans, as suggested by Hongyan.
   def _predicated_revoke_best(self, fn, n=None, revoke=[]):
 
-    assert len(list(revoke)) < self._revoke_k
+    assert len(list(revoke)) <= self._revoke_k
 
     if n is None :
         n = self._revoke_k
@@ -404,35 +411,35 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
       # For each mandatory span, fish through the best spans to see if one
       # contains it.  If so, let's revoke the container rather than the
       # containee.
-      bestset = set()
+      rset = set()
       for mustbix in revoke:
         for (brnj, brix, brsz) in brss :
           if brix <= mustbix < brix + brsz :
-            bestset.add((brnj, brix, brsz))
+            rset.add((brnj, brix, brsz))
             break
         else :
           # No container found; add the mandatory span, counting the number
           # of junk buckets in it.
           (qix, qsz, _) = self._bix2state.get(mustbix, coalesce_with_values=st_tj)
-          bestset.add( (sum(sz for (_, sz, v) in self._bix2state[qix:qix+qsz] if v == BuckSt.JUNK),
-                        qix, qsz) )
+          rset.add( (sum(sz for (_, sz, v) in self._bix2state[qix:qix+qsz] if v == BuckSt.JUNK),
+                     qix, qsz) )
 
       # Now, go through the best spans until we have at most the number of
       # spans we can revoke in one go.  Since we may have picked some of the
       # best spans while considering mandatory spans above, it's not as
       # simple as just concatenating a list, but it's still not terrible.
-      while len(bestset) < self._revoke_k and brss != [] :
-        bestset.add(brss[-1])
+      while len(rset) < self._revoke_k and brss != [] :
+        rset.add(brss[-1])
         brss = brss[:-1]
 
       # Find the largest best span not used and update the cache
       while brss != [] :
-        if brss[-1] not in bestset : break
+        if brss[-1] not in rset : break
         brss = brss[:-1]
       if brss != [] : self._brscache = brss[-1]
       else          : self._brscache = (0, -1, -1)
 
-      self._do_revoke(bestset)
+      self._do_revoke(rset)
 
   @abstractmethod
   def _maybe_revoke(self) :
@@ -602,8 +609,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
 
     if self._brscache is not None :
       (brsnj, _, _) = self._brscache
-      (_, qsz, _) = self._bix2state.get(bix,
-                          coalesce_with_values= {BuckSt.TIDY, BuckSt.JUNK})
+      (_, qsz, _) = self._bix2state.get(bix, coalesce_with_values= st_tj)
       if qsz >= brsnj :
         self._brscache = None
 
@@ -773,22 +779,45 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
 # --------------------------------------------------------------------- }}}
 # Rendering ----------------------------------------------------------- {{{
 
+  def occshade(self, szbm) :
+    (sz, bm) = szbm
+
+    maxoix = self._maxoix(sz)
+    pc = bin(bm).count("1") # XXX YIKES
+    i = ceil(256.0 * pc / maxoix) - 1
+    return (i << 8) + ((255 - i) << 16)
+
   def render(self, img) :
     from common.render import renderSpansZ
     from PIL import ImageDraw
-    renderSpansZ(img, 18,
-        ((loc, sz, bst2color[st]) for (loc, sz, st) in self._bix2state if st != BuckSt.AHWM))
-    if self._brscache is not None :
-        (_, brsloc, brssz) = self._brscache
-        renderSpansZ(img, 18, [(brsloc, brssz, cBRS)])
-    else :
-        brss = self._find_largest_revokable_spans(n=1)
-        if brss != [] and brss[0][1] is not None :
-            renderSpansZ(img, 18, [(brss[0][1], brss[0][2], cBRS)])
+
+    zo = img.width.bit_length() << 1
+
+    # Paint most of the buckets; exclude AHWM since that's big
+    renderSpansZ(img, zo,
+        ((loc, sz, bst2color[st])
+          for (loc, sz, st) in self._bix2state if st != BuckSt.AHWM))
+
+    # Paint over small WAIT buckets with some occupancy information
+    renderSpansZ(img, zo,
+        ((bix, 1, self.occshade(self._bix2szbm[bix]))
+          for (loc, sz, st) in self._bix2state
+            if st == BuckSt.WAIT
+          for bix in range(loc,loc+sz)
+            if self._bix2szbm.get(bix,None) is not None
+            if self._issmall(self._bix2szbm[bix][0]) ))
+
+    # Paint over the largest revokable span (which may hide some TIDY
+    # blocks, but that's fine)
+    brss = self._find_largest_revokable_spans(n=1)
+    if brss != [] and brss[0][1] is not None :
+        renderSpansZ(img, zo, [(brss[0][1], brss[0][2], cBRS)])
+
+    # Paint over the oldest JUNK span
     oldestj = self._junklru.first
     if oldestj is not None :
         (qbix, qsz, _) = self._bix2state.get(oldestj.value, coalesce_with_values=st_tj)
-        renderSpansZ(img, 18, [(qbix, qsz, cOJS)])
+        renderSpansZ(img, zo, [(qbix, qsz, cOJS)])
 
 # --------------------------------------------------------------------- }}}
 
