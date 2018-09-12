@@ -151,6 +151,15 @@ class IntervalMap:
     def __iter__(self):
         return ((base, sz, v) for base, (sz, v) in self.d.items())
 
+    def irange(self, start, stop):
+        if not self._base <= start < self._base + self._sz:
+            raise StopIteration
+        d = self.d
+        base = d.iloc[d.bisect_right(start) - 1]
+        yield (base, *d[base])
+
+        for base in d.irange(start, stop, inclusive=(False, False)) :
+            yield (base, *d[base])
 
     def mark(self, loc, sz, v, recursing=0):
         if not self._base <= loc < self._base + self._sz:
