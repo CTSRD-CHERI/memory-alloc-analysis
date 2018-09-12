@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import ast
 import importlib.machinery
 import importlib.util
 import logging
@@ -38,6 +39,7 @@ argp.add_argument('--stdouterr', help='Equate sys.stdout and sys.stderr',
 
 argp.add_argument('--render-freq', action='store', type=int, default=None)
 argp.add_argument('--render-dir', action='store', type=str, default="./tmp")
+argp.add_argument('--render-geom', action='store', type=ast.literal_eval, default=(1024,1024))
 
 argp.add_argument('remainder', nargs=argparse.REMAINDER,
                   help="Arguments fed to allocator model")
@@ -92,7 +94,7 @@ if (args.render_freq is not None):
       self.count = 0
     def _common(self) :
       if self.count % args.render_freq == 0 :
-        img = Image.new('RGB', (500,500))
+        img = Image.new('RGB', args.render_geom)
         alloc.render(img)
         img.save("%s/%s.png" % (args.render_dir, run.timestamp_ns))
       self.count += 1
