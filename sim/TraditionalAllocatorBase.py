@@ -206,12 +206,14 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
     # All JUNK queue entries are backed by JUNK segments
     for (jb, jsz) in self._junklru :
       (qb, qsz, qv) = self._eva2sst[jb]
-      assert jb == qb and jsz == qsz and qv == SegSt.JUNK
+      assert jb == qb and jsz == qsz and qv == SegSt.JUNK, \
+             ("Junk list state mismatch", (jb, jsz), (qb, qsz, qv))
 
     # All TIDY list entries are backed by TIDY segments
-    for (jb, jsz) in self._tidylst :
-      (qb, qsz, qv) = self._eva2sst[jb]
-      assert jb == qb and jsz == qsz and qv == SegSt.TIDY
+    for (tb, tsz) in self._tidylst :
+      (qb, qsz, qv) = self._eva2sst[tb]
+      assert tb == qb and tsz == qsz and qv == SegSt.TIDY, \
+             ("Tidy list state mismatch", (tb, tsz), (qb, qsz, qv))
 
     # All WAIT spans are covered by allocations, all JUNK and TIDY spans
     # correspond with entries in their queues
@@ -248,6 +250,8 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
 # --------------------------------------------------------------------- }}}
 # Revocation logic ---------------------------------------------------- {{{
 
+  # Mark a span TIDY.  This must not be used to re-mark any existing TIDY
+  # span.
   def _mark_tidy(self, loc, sz):
       self._eva2sst.mark(loc, sz, SegSt.TIDY)
       dll_im_coalesced_insert(loc,sz,self._eva2sst,self._tidylst,self._tidyadn)
@@ -299,10 +303,10 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
     # Because we coalesce with TIDY spans while revoking, there may be
     # several JUNK spans in here.  Go remove all of them from the LRU.
     for (qb, qsz, qv) in self._eva2sst[loc:loc+sz] :
-      assert qv in sst_atj, "Revoking non-revokable span"
+      assert qv in sst_tj, "Revoking non-revokable span"
       if qv == SegSt.JUNK :
         self._junklru.remove(self._junkadn.pop(qb))
-      self._mark_tidy(qb, qsz)
+        self._mark_tidy(qb, qsz)
 
    self._publish('revoked', "---", [(loc, loc+sz) for (_, loc, sz) in ss])
 
@@ -371,6 +375,23 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
     if reqbase > self._wildern :
       self._mark_tidy(self._wildern, reqbase - self._wildern)
 
+    # Remove span from tidy list; may create two more entries
+    if reqbase < self._wildern:
+      (qb, qsz, qv) = self._eva2sst[reqbase]
+      assert qv == SegSt.TIDY
+      assert qsz >= reqsz
+      place = self._tidyadn[qb].next
+      (tb, tsz) = self._tidylst.remove(self._tidyadn[qb])
+      assert tb == qb
+      assert tsz == qsz
+      if qb + qsz != reqbase + reqsz :
+        # Insert residual right span
+        self._tidyadn[reqbase+reqsz] = self._tidylst.insert(\
+          (reqbase+reqsz, qb+qsz-reqbase-reqsz), place)
+      if reqbase != qb :
+        # Insert residual left span
+        self._tidyadn[qb] = self._tidylst.insert((qb, reqbase-qb), place)
+
     # If the allocation takes place within the current best revokable span,
     # invalidate the cache and let the revocation heuristic reconstruct it.
     if self._brscache is not None :
@@ -391,22 +412,6 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
     tidys = itertools.chain(self._tidylst,
                             [(self._wildern, 2**64 - self._wildern)])
     loc = self._alloc_place(stk, sz, tidys)
-
-    # Remove span from tidy list; may create two more entries
-    if loc < self._wildern:
-      (qb, qsz, qv) = self._eva2sst[loc]
-      assert qv == SegSt.TIDY
-      assert qsz >= sz
-      place = self._tidyadn[qb].next
-      (tb, tsz) = self._tidylst.remove(self._tidyadn[qb])
-      assert tb == qb
-      assert tsz == qsz
-      if qb + qsz != loc + sz :
-        # Insert residual right span
-        self._tidyadn[loc+sz] = self._tidylst.insert((loc+sz, qb+qsz-loc-sz), place)
-      if loc != qb :
-        # Insert residual left span
-        self._tidyadn[qb] = self._tidylst.insert((qb, loc-qb), place)
 
     self._ensure_mapped(stk,loc,sz)
     self._mark_allocated(loc,sz)
