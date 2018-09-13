@@ -530,7 +530,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
 
       bbix = self._alloc_place_small(stk, sz, iter(bbs.keys()), tidys)
       if bbix not in bbs :
-        self._publish('mapd', stk, self._bix2va(bbix), self._bix2va(bbix+1))
+        self._publish('mapd', stk, self._bix2va(bbix), self._bix2va(bbix+1), 0b11)
         self._mark_allocated(bbix, 1, BuckSt.BUMP)
         self._bix2szbm[bbix] = (fsz, 0)
         if fsz not in self._szbix2ap : self._szbix2ap[fsz] = {}
@@ -574,7 +574,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
       self._mark_allocated(bbix, bsz, BuckSt.WAIT)
       self._bix2szbm[bbix] = (sz, 0)
       res = self._bix2va(bbix)
-      self._publish('mapd', stk, res, res + self._nbucks2sz(bsz))
+      self._publish('mapd', stk, res, res + self._nbucks2sz(bsz), 0b11)
 
     self._maybe_revoke()
     if __debug__ : logging.debug("<_alloc eva=%x", res)
@@ -751,7 +751,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
       self._mark_allocated(eix, self._sz2nbucks(nsz - osz), BuckSt.WAIT)
       self._publish('mapd', stk,
                     self._nbucks2sz(bix + self._sz2nbucks(osz)), \
-                    self._nbucks2sz(bix + self._sz2nbucks(nsz)))
+                    self._nbucks2sz(bix + self._sz2nbucks(nsz)), 0b11)
       return True
 
     return False

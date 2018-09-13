@@ -184,11 +184,11 @@ class Allocator(Publisher):
 # --------------------------------------------------------------------- }}}
 # Mapping ------------------------------------------------------------- {{{
 
-  def mapd(self, stk, begin, end):
+  def mapd(self, stk, begin, end, prot):
 
     # XXX
 
-    self._publish('mapd', stk, begin, end)
+    self._publish('mapd', stk, begin, end, prot)
   
 # --------------------------------------------------------------------- }}}
 # Unmapping ----------------------------------------------------------- {{{

@@ -156,8 +156,8 @@ class Unrun:
     def reallocd(self, publ, stk, begin_old, begin_new, end_new):
         print("%d\t%s\trealloc\t%x %d\t%x" % (self._tslam(), stk, begin_old, end_new - begin_new, begin_new), file=self._out)
 
-    def mapd(self, publ, stk, begin, end):
-        print("%d\t%s\tmmap\t0 %d\t%x" % (self._tslam(), stk, end - begin, begin))
+    def mapd(self, publ, stk, begin, end, prot):
+        print("%d\t%s\tmmap\t0 %d %d\t%x" % (self._tslam(), stk, end - begin, prot, begin))
 
     def unmapd(self, publ, stk, begin, end):
         print("%d\t%s\tmunmap\t%x %d\t" % (self._tslam(), stk, begin, end - begin))

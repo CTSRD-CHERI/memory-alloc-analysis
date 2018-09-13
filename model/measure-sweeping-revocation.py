@@ -263,7 +263,7 @@ class MappedAddrSpaceModel(BaseIntervalAddrSpaceModel):
 class AllocatorMappedAddrSpaceModel(MappedAddrSpaceModel):
     '''Tracks mapped/unmapped by the allocator for internal use'''
     def mapd(self, callstack, begin, end, prot):
-        if prot == 3 and\
+        if prot == 0b11 and\
            any((callstack.find(frame) >= 0 for frame in ('malloc', 'calloc', 'realloc', 'free'))):
             self._update(AddrIval(begin, end, AddrIvalState.MAPD))
 

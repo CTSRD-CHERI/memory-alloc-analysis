@@ -51,8 +51,8 @@ class Allocator (Publisher):
   def sweep_size_measured(self, sz):
     self._publish('sweep_size_measured', sz)
 
-  def mapd(self, stk, begin, end):
-    self._publish('mapd', stk, begin, end)
+  def mapd(self, stk, begin, end, prot):
+    self._publish('mapd', stk, begin, end, prot)
 
   def unmapd(self, stk, begin, end):
     self._publish('unmapd', stk, begin, end)

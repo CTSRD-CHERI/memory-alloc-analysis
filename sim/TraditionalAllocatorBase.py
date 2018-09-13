@@ -362,7 +362,7 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
       if qv == PageSt.MAPD : continue
       if qb + qsz > plim : qsz = plim - qb
       self._nmapped += self._npg2nby(qsz)
-      self._publish('mapd', stk, self._evp2eva(qb), self._evp2eva(qb + qsz))
+      self._publish('mapd', stk, self._evp2eva(qb), self._evp2eva(qb + qsz), 0b11)
     self._evp2pst.mark(pbase, plim-pbase+1, PageSt.MAPD)
 
   def _mark_allocated(self, reqbase, reqsz) :
