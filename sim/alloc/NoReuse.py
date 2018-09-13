@@ -32,9 +32,9 @@ class Allocator (RenamingAllocatorBase):
 
     return res
 
-  def _free(self, eva):
+  def _free(self, stk, eva):
     self._state.mark(eva, self._eva2sz[eva], False)
     del self._eva2sz[eva]
 
-  def _try_realloc(self, oeva, nsz):
+  def _try_realloc(self, stk, oeva, nsz):
     return False

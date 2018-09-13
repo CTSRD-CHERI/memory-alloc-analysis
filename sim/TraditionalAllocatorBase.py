@@ -421,7 +421,7 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
 # --------------------------------------------------------------------- }}}
 # Free ---------------------------------------------------------------- {{{
 
-  def _ensure_unmapped(self, loc, sz):
+  def _ensure_unmapped(self, stk, loc, sz):
     pbase = self._eva2evp_roundup(loc)
     plim  = self._eva2evp(loc + sz - 1)
     if pbase == plim : return # might not be an entire page
@@ -429,11 +429,11 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
     for (qb, qsz, qv) in self._evp2pst[pbase:plim] :
       if qv == PageSt.UMAP : continue
       self._nmapped -= self._npg2nby(qsz)
-      self._publish('unmapd', "---", self._evp2eva(qb), self._evp2eva(qb + qsz))
+      self._publish('unmapd', stk, self._evp2eva(qb), self._evp2eva(qb + qsz))
     self._evp2pst.mark(pbase, plim-pbase, PageSt.UMAP)
 
 
-  def _free(self, loc):
+  def _free(self, stk, loc):
     if self._paranoia > PARANOIA_STATE_PER_OPER : self._state_asserts()
     assert self._eva2sst[loc][2] == SegSt.WAIT, "free non-WAIT?"
 
@@ -458,7 +458,7 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
     # possibly for some material on either side.
     # XXX configurable policy
     if qsz > (16 * 2**self._pagelog) :
-      self._ensure_unmapped(qb, qsz)
+      self._ensure_unmapped(stk, qb, qsz)
 
     if self._njunk >= self._nwait and len(self._junklru) >= 16 :
       self._do_revoke_best_and(revoke=[loc for (loc, _) in itertools.islice(self._junklru,8)])
@@ -466,7 +466,7 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
 # --------------------------------------------------------------------- }}}
 # Realloc ------------------------------------------------------------- {{{
 
-  def _try_realloc(self, oeva, nsz):
+  def _try_realloc(self, stk, oeva, nsz):
     # XXX
     return False
 

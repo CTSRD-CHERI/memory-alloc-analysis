@@ -574,7 +574,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
       self._mark_allocated(bbix, bsz, BuckSt.WAIT)
       self._bix2szbm[bbix] = (sz, 0)
       res = self._bix2va(bbix)
-      self._publish('mapd', "---", res, res + self._nbucks2sz(bsz))
+      self._publish('mapd', stk, res, res + self._nbucks2sz(bsz))
 
     self._maybe_revoke()
     if __debug__ : logging.debug("<_alloc eva=%x", res)
@@ -615,7 +615,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
 
     dll_im_coalesced_insert(bix,bsz,self._bix2state,self._junklru,self._junkbdn)
 
-  def _free(self, eva) :
+  def _free(self, stk, eva) :
     if __debug__ : logging.debug(">_free eva=%x", eva)
     if self._paranoia > PARANOIA_STATE_PER_OPER : self._state_asserts()
 
@@ -662,7 +662,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
         # XXX At the moment, we only unmap when the entire bucket is free.
         # This is just nwf being lazy and not wanting to do the bit math for
         # page-at-a-time release.
-        self._publish('unmapd', "---", self._bix2va(bix), self._bix2va(bix+1))
+        self._publish('unmapd', stk, self._bix2va(bix), self._bix2va(bix+1))
 
         self._maybe_revoke()
       else :
@@ -678,7 +678,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
         "Mismatched bucket states of large allocation"
 
       self._mark_junk(bix, bsz)
-      self._publish('unmapd', "---", self._bix2va(bix), self._bix2va(bix+bsz))
+      self._publish('unmapd', stk, self._bix2va(bix), self._bix2va(bix+bsz))
       self._maybe_revoke()
     if __debug__ : logging.debug("<_free eva=%x", eva)
 
@@ -694,7 +694,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
   #
   # If you're not convinced by the above, you're exactly the kind of person
   # that --realloc=onlyshrink or --realloc=none are for!
-  def _try_realloc_yes(self, oeva, nsz):
+  def _try_realloc_yes(self, stk, oeva, nsz):
     if self._paranoia > PARANOIA_STATE_PER_OPER : self._state_asserts()
 
     # Find the size of the existing allocation
@@ -749,14 +749,14 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
           self._bix2va(bix), osz, nsz)
       self._bix2szbm[bix] = (nsz, 0)
       self._mark_allocated(eix, self._sz2nbucks(nsz - osz), BuckSt.WAIT)
-      self._publish('mapd', "---",
+      self._publish('mapd', stk,
                     self._nbucks2sz(bix + self._sz2nbucks(osz)), \
                     self._nbucks2sz(bix + self._sz2nbucks(nsz)))
       return True
 
     return False
 
-  def _try_realloc_onlyshrink(self, oeva, nsz):
+  def _try_realloc_onlyshrink(self, stk, oeva, nsz):
     if self._paranoia > PARANOIA_STATE_PER_OPER : self._state_asserts()
 
     # Find the size of the existing allocation
@@ -770,7 +770,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
     (osz, _) = b
     return nsz <= osz
 
-  def _try_realloc_never(self, oeva, nsz):
+  def _try_realloc_never(self, stk, oeva, nsz):
     # Don't bother with PARANOIA_STATE_PER_OPER since we're just going to
     # call down anyway
 

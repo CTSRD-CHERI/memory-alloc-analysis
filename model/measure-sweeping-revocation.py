@@ -168,7 +168,7 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
                  run.timestamp, interval, overlaps_allocd)
 
         if overlaps_freed:
-            self._publish('reused', begin, end)
+            self._publish('reused', stk, begin, end)
         super()._update(interval)
         self.__addr_ivals.add(interval)
 
@@ -178,7 +178,7 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
         if not interval_old:
             logger.warning('%d\tW: No existing allocation to realloc at %x, doing just alloc',
                   run.timestamp, begin_old)
-            self.allocd(begin_new, end_new)
+            self.allocd(stk, begin_new, end_new)
             return
         if interval_old.state is not AddrIvalState.ALLOCD:
             logger.error('%d\tE: Realloc of non-allocated interval %s, assuming it is allocated',
@@ -201,9 +201,9 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
                 self.__addr_ivals.add(ival_old_freed_lpart)
         else:
             # XXX use _freed and eliminate spurious W/E reporting
-            self.freed(begin_old)
+            self.freed(stk, begin_old)
 
-        self.allocd(begin_new, end_new)
+        self.allocd(stk, begin_new, end_new)
 
 
     def freed(self, stk, begin):
@@ -297,8 +297,8 @@ class AccountingAddrSpaceModel(BaseAddrSpaceModel):
         self.allocd(stk, nbegin, nend)
 
 class AllocatedAddrSpaceModelSubscriber:
-    def reused(self, alloc_state, begin, end):
-        raise NotImplemented
+    def reused(self, alloc_state, stk, begin, end):
+        raise NotImplementedError
 
 
 class BaseSweepingRevoker(AllocatedAddrSpaceModelSubscriber):
@@ -336,16 +336,16 @@ class BaseSweepingRevoker(AllocatedAddrSpaceModelSubscriber):
 
 
 class SimpleSweepingRevoker(BaseSweepingRevoker):
-    def reused(self, alloc_state, begin, end):
+    def reused(self, alloc_state, stk, begin, end):
         intervals = [i for i in alloc_state.addr_ivals(begin, end) if i.state is AddrIvalState.FREED]
         if intervals:
             self._sweep(addr_space.size, intervals)
         for ival in intervals:
-            alloc_state.revoked(ival.begin, ival.end)
+            alloc_state.revoked(stk, ival.begin, ival.end)
 
 
 class CompactingSweepingRevoker(BaseSweepingRevoker):
-    def reused(self, alloc_state, begin, end):
+    def reused(self, alloc_state, stk, begin, end):
         overlaps = [i for i in alloc_state.addr_ivals(begin, end) if i.state is AddrIvalState.FREED]
         olaps_coalesced = self._coalesce_freed_and_revoked(overlaps)
 
@@ -370,7 +370,7 @@ class CompactingSweepingRevoker(BaseSweepingRevoker):
                 addr_fwd = max(addr_fwd + 0x1000, olaps_coalesced[-1].end)
             self._sweep(addr_space.size, olaps_coalesced)
         for ival in olaps_coalesced:
-            alloc_state.revoked(ival.begin, ival.end)
+            alloc_state.revoked(stk, ival.begin, ival.end)
 
 
     @staticmethod
@@ -456,7 +456,7 @@ class AllocationMapOutput(BaseOutput, AllocatedAddrSpaceModelSubscriber):
         alloc_state.register_subscriber(self)
 
 
-    def reused(self, alloc_state, begin, end):
+    def reused(self, alloc_state, stk, begin, end):
         self._addr_ivals_reused.add(AddrIval(begin, end, None))
 
 

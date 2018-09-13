@@ -42,7 +42,7 @@ class Allocator (Publisher):
         self._shadows.remove(ova)
         self._shadows.add(nva)
         return
-    self._publish('reallocd', stk ova, nva, nend)
+    self._publish('reallocd', stk, ova, nva, nend)
         
   # Pass through
   def size_measured(self, sz):
