@@ -18,7 +18,7 @@ class Allocator (RenamingAllocatorBase):
     self._maxeva = 0
     self._state = IntervalMap(0, 2**64, False)
 
-  def _alloc(self, sz):
+  def _alloc(self, stk, sz):
     # Impose a minimum size on all allocations, so that, in particular,
     # zero-size allocations are still distinct entities, as required by
     # POSIX.
@@ -32,7 +32,7 @@ class Allocator (RenamingAllocatorBase):
 
     return res
 
-  def _freed(self, eva):
+  def _free(self, eva):
     self._state.mark(eva, self._eva2sz[eva], False)
     del self._eva2sz[eva]
 

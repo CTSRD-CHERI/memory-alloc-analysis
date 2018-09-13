@@ -1,0 +1,30 @@
+Eventually, we'll probably want an actual program that can do statistics
+analysis for us, but as of today, well, have some notes instead.
+
+To begin, push your favorite trace into a SQLite database, collecting any
+warnings that arise along the way::
+
+    pv ${TRACE} | pypy -O ./util/trace-to-db.py ${TRACE}.db 2>${TRACE}.db.warn
+
+We're going to proceed to do some analysis with R, because that seems to be
+the standard tool for this kind of thing and I (nwf) don't know of anything
+better.  You'll need the ``rsqlite`` and ``dplyr`` CRAN packages, at least;
+on a Debian system, ``apt install r-recommended r-cran-{rsqlite,dplyr}``
+should do it.  Start up the R repl and feed it the following, substituting
+${TRACE} as above.  
+
+    library(dplyr)
+    library(ggplot2)
+
+    con <- DBI::dbConnect(RSQLite::SQLite(), dbname = "${TRACE}.db")
+    allocs <- tbl(con, 'allocs')
+
+Now ``allocs`` is a handle to the table of the same name in the trace
+database and you can plot histograms of object lifetime.  Here is an example
+which filters by return address and object size, excluding any objects that
+were never freed in the trace (you'll probably want to count those
+separately)::
+
+    allocs %>% filter(!is.na(fts)) %>% filter(stk %like% "aee18d9 %") %>% filter( sz == 280 ) %>% mutate( lt = fts - ats ) %>% pull(lt) %>% log(base=10) %>% hist()
+
+I have yet to get 2D histograms working, but will update this doc when I do.

@@ -158,7 +158,7 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
         return self._total
 
 
-    def allocd(self, begin, end):
+    def allocd(self, stk, begin, end):
         interval = AddrIval(begin, end, AddrIvalState.ALLOCD)
         overlaps = self.addr_ivals(begin, end)
         overlaps_allocd = [o for o in overlaps if o.state is AddrIvalState.ALLOCD]
@@ -173,7 +173,7 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
         self.__addr_ivals.add(interval)
 
 
-    def reallocd(self, begin_old, begin_new, end_new):
+    def reallocd(self, stk, begin_old, begin_new, end_new):
         interval_old = self.addr_ival(begin_old)
         if not interval_old:
             logger.warning('%d\tW: No existing allocation to realloc at %x, doing just alloc',
@@ -206,7 +206,7 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
         self.allocd(begin_new, end_new)
 
 
-    def freed(self, begin):
+    def freed(self, stk, begin):
         interval = self.addr_ival(begin)
         if interval:
             if begin != interval.begin or interval.state is not AddrIvalState.ALLOCD:
@@ -220,7 +220,7 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
         self.__addr_ivals.add(interval)
 
 
-    def revoked(self, *bes):
+    def revoked(self, stk, *bes):
         if not isinstance(bes[0], tuple):
             bes = [(bes[0], bes[1])]
         err_str = ''
@@ -283,18 +283,18 @@ class AccountingAddrSpaceModel(BaseAddrSpaceModel):
     def unmapd(self, _, begin, end):
         self.mapd_size -= end - begin
 
-    def allocd(self, begin, end):
+    def allocd(self, stk, begin, end):
         sz = end - begin
         self._va2sz[begin] = sz
         self.allocd_size += sz
-    def freed(self, begin):
+    def freed(self, stk, begin):
         sz = self._va2sz.get(begin)
         if sz is not None :
             self.allocd_size -= sz
             del self._va2sz[begin]
-    def reallocd(self, obegin, nbegin, nend):
-        self.freed(obegin)
-        self.allocd(nbegin, nend)
+    def reallocd(self, stk, obegin, nbegin, nend):
+        self.freed(stk, obegin)
+        self.allocd(stk, nbegin, nend)
 
 class AllocatedAddrSpaceModelSubscriber:
     def reused(self, alloc_state, begin, end):
@@ -318,7 +318,7 @@ class BaseSweepingRevoker(AllocatedAddrSpaceModelSubscriber):
         return self.swept // 2**30
 
 
-    def revoked(self, *bes):
+    def revoked(self, stk, *bes):
         self._sweep(addr_space.size, [AddrIval(b, e, AddrIvalState.FREED) for b, e in bes])
 
 
