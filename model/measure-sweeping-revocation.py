@@ -168,6 +168,10 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
                  run.timestamp, interval, overlaps_allocd)
 
         if overlaps_freed:
+            if args.exit_on_reuse:
+                logger.critical("%d\tE: New allocation %s re-uses %s, exiting as instructed "
+                                "by --exit-on-reuse", run.timestamp, interval, overlaps_freed)
+                sys.exit(1)
             self._publish('reused', stk, begin, end)
         super()._update(interval)
         self.__addr_ivals.add(interval)
@@ -557,6 +561,8 @@ argp.add_argument('revoker', nargs='?', default='CompactingSweepingRevoker',
                   help="Select the revoker type, or 'account' to assume error-free trace and speed up the"
                   " stats gathering.  Revoker types: NaiveSweepingRevokerN, CompactingSweepingRevokerN,"
                   " where N is the revoker capacity (in # of capabilities, defaults to 1024).")
+argp.add_argument("--exit-on-reuse", action="store_true", help="Stop processing and exit with non-zero code "
+                  "if the trace contains re-use of freed memory to which there are unrevoked references")
 args = argp.parse_args()
 
 # Set up logging
