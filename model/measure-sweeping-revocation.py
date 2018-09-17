@@ -266,26 +266,32 @@ class MappedAddrSpaceModel(BaseIntervalAddrSpaceModel):
 
 class AllocatorMappedAddrSpaceModel(MappedAddrSpaceModel):
     '''Tracks mapped/unmapped by the allocator for internal use'''
+
+    @staticmethod
+    def call_is_from_allocator(callstack):
+       return any(callstack.find(frame) >= 0 for frame in ('malloc', 'calloc', 'realloc', 'free'))
+
     def mapd(self, callstack, begin, end, prot):
-        if prot == 0b11 and\
-           any((callstack.find(frame) >= 0 for frame in ('malloc', 'calloc', 'realloc', 'free'))):
+        if prot == 0b11 and AMAS.call_is_from_allocator(callstack):
             self._update(AddrIval(begin, end, AddrIvalState.MAPD))
 
     # Inherits the unmapd() method, accepting unmaps that are also external to the allocator.
     # Such unmaps have an effect on the mapd_size if they target the allocator's mappings
+AMAS = AllocatorMappedAddrSpaceModel
 
-
-class AccountingAddrSpaceModel(BaseAddrSpaceModel):
+class AccountingAllocatedAddrSpaceModel(BaseAddrSpaceModel):
     def __init__(self):
         super().__init__()
         self._va2sz = {}
         self.allocd_size = 0
         self.mapd_size = 0
 
-    def mapd(self, _, begin, end, __):
-        self.mapd_size += end - begin
-    def unmapd(self, _, begin, end):
-        self.mapd_size -= end - begin
+    def mapd(self, callstack, begin, end, prot):
+        if prot == 0b11 and AMAS.call_is_from_allocator(callstack):
+            self.mapd_size += end - begin
+    def unmapd(self, callstack, begin, end):
+        if AMAS.call_is_from_allocator(callstack):
+            self.mapd_size -= end - begin
 
     def allocd(self, stk, begin, end):
         sz = end - begin
@@ -571,8 +577,9 @@ logger = logging.getLogger()
 
 # Set up the model
 if args.revoker == "account":
-    alloc_state = AccountingAddrSpaceModel()
-    addr_space = AccountingAddrSpaceModel()
+    alloc_state = AccountingAllocatedAddrSpaceModel()
+    addr_space = alloc_state
+    alloc_addr_space = addr_space
     revoker = BaseSweepingRevoker()
 else:
     alloc_state = AllocatedAddrSpaceModel()
