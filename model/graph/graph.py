@@ -27,7 +27,7 @@ data0[y7] //= 1000         # sweep ivals units to thousands
 
 matplotlib.rc('font', size=11)
 #fig, ax = plt.subplots()
-plt.subplot(3, 1, 1)
+plt.subplot(4, 1, 1)
 plt.subplots_adjust(hspace=1)
 
 plt.plot(time_s, data0[y1], time_s, data0[y2], time_s, data0[y3], time_s, data0[y4])
@@ -37,30 +37,29 @@ plt.xlabel('Time (s)')
 plt.ylabel('Amount (mb)')
 plt.savefig('{0}-aspace_stats-vs-time.eps'.format(data0_label.lower()))
 
-plt.subplot(3, 1, 2)
+plt.subplot(4, 1, 2)
 sweep_per_ns = (data0[y6][1:] - data0[y6][:-1]) / (data0[x][1:] - data0[x][:-1])
 sweep_per_s = sweep_per_ns * 10**9
 #print(sweep_per_s)
 plt.plot(time_s[:-1], sweep_per_s, color='blue')
 plt.title('{0} allocator sweeping amount requirement over time'.format(data0_label))
-plt.legend([''])
 plt.xlabel('Time (s)')
 plt.ylabel('Amount (gb/s)')
 
-plt.subplot(3, 1, 3)
+plt.subplot(4, 1, 3)
 sweeps_per_ns = (data0[y5][1:] - data0[y5][:-1]) / (data0[x][1:] - data0[x][:-1])
 sweeps_per_s = sweeps_per_ns * 10**9
 plt.plot(time_s[:-1], sweeps_per_s, color='red')
+plt.title('{0} allocator sweeps required over time.format(data0_label))
 plt.xlabel('Time (s)')
 plt.ylabel('Amount (thousands)', color='red')
 
+plt.subplot(4, 1, 4)
 sweeps_ivals_per_ns = (data0[y7][1:] - data0[y7][:-1]) / (data0[x][1:] - data0[x][:-1])
 sweeps_ivals_per_s = sweeps_ivals_per_ns * 10**9
-plt.twinx()
 plt.plot(time_s[:-1], sweeps_ivals_per_s, color='blue')
-plt.title('{0} allocator sweeps required over time'.format(data0_label))
-plt.legend(['Sweeps'])
-plt.legend(['Sweep intervals'])
+plt.title('{0} allocator sweep intervals required over time'.format(data0_label))
+plt.xlabel('Time (s)')
 plt.ylabel('Amount (thousands)', color='blue')
 plt.savefig('{0}-sweep_per_s-vs-time.eps'.format(data0_label.lower()))
 
