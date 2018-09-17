@@ -289,6 +289,7 @@ class AccountingAllocatedAddrSpaceModel(BaseAddrSpaceModel):
     def mapd(self, callstack, begin, end, prot):
         if prot == 0b11 and AMAS.call_is_from_allocator(callstack):
             self.mapd_size += end - begin
+        output.update()
     def unmapd(self, callstack, begin, end):
         if AMAS.call_is_from_allocator(callstack):
             self.mapd_size -= end - begin
@@ -297,6 +298,7 @@ class AccountingAllocatedAddrSpaceModel(BaseAddrSpaceModel):
         sz = end - begin
         self._va2sz[begin] = sz
         self.allocd_size += sz
+        output.update()
     def freed(self, stk, begin):
         sz = self._va2sz.get(begin)
         if sz is not None :
