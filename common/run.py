@@ -10,15 +10,15 @@ class Run:
         self.timestamp = 0
         self._ts_initial = 0
         self._file = file
-        self._trace_listeners = trace_listeners
-        self._addr_space_sample_listeners = addr_space_sample_listeners
+        self._trace_listeners = list(set(trace_listeners))
+        self._addr_space_sample_listeners = list(set(addr_space_sample_listeners))
 
 
     def register_trace_listener(self, *l):
-        self._trace_listeners.extend(l)
+        self._trace_listeners.extend(set(l) - set(self._trace_listeners))
 
     def register_addr_space_sample_listener(self, *l):
-        self._addr_space_sample_listeners.extend(l)
+        self._addr_space_sample_listeners.extend(set(l) - set(self._addr_space_sample_listeners))
 
 
     @property
