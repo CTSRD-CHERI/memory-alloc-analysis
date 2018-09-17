@@ -42,7 +42,8 @@ sweep_per_ns = (data0[y6][1:] - data0[y6][:-1]) / (data0[x][1:] - data0[x][:-1])
 sweep_per_s = sweep_per_ns * 10**9
 #print(sweep_per_s)
 plt.plot(time_s[:-1], sweep_per_s, color='blue')
-plt.title('{0} allocator sweeping amount requirement over time'.format(data0_label))
+plt.title('{0} sweeping amount requirement over time\nmax={1}gb/s   avg={2}gb/s'
+          .format(data0_label, int(max(sweep_per_s)), int(np.average(sweep_per_s))))
 plt.xlabel('Time (s)')
 plt.ylabel('Amount (gb/s)')
 
@@ -50,7 +51,8 @@ plt.subplot(4, 1, 3)
 sweeps_per_ns = (data0[y5][1:] - data0[y5][:-1]) / (data0[x][1:] - data0[x][:-1])
 sweeps_per_s = sweeps_per_ns * 10**9
 plt.plot(time_s[:-1], sweeps_per_s, color='red')
-plt.title('{0} allocator sweeps required over time.format(data0_label))
+plt.title('{0} sweeps required over time\nmax={1}k/s   avg={2}k/s'
+          .format(data0_label, int(max(sweeps_per_s)), int(np.average(sweeps_per_s))))
 plt.xlabel('Time (s)')
 plt.ylabel('Amount (thousands)', color='red')
 
@@ -58,9 +60,10 @@ plt.subplot(4, 1, 4)
 sweeps_ivals_per_ns = (data0[y7][1:] - data0[y7][:-1]) / (data0[x][1:] - data0[x][:-1])
 sweeps_ivals_per_s = sweeps_ivals_per_ns * 10**9
 plt.plot(time_s[:-1], sweeps_ivals_per_s, color='blue')
-plt.title('{0} allocator sweep intervals required over time'.format(data0_label))
+plt.title('{0} sweep intervals required over time\nmax={1}k/s   avg={2}k/s'
+          .format(data0_label, int(max(sweeps_ivals_per_s)), int(np.average(sweeps_ivals_per_s))))
 plt.xlabel('Time (s)')
 plt.ylabel('Amount (thousands)', color='blue')
-plt.savefig('{0}-sweep_per_s-vs-time.eps'.format(data0_label.lower()))
+plt.savefig('{0}-aspace_stats-vs-time.eps'.format(data0_label.lower()))
 
 plt.show()
