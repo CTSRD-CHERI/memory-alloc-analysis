@@ -329,7 +329,7 @@ class BaseSweepingRevoker(AllocatedAddrSpaceModelSubscriber):
 
 
     def revoked(self, stk, *bes):
-        self._sweep(addr_space.size, [AddrIval(b, e, AddrIvalState.FREED) for b, e in bes])
+        self._sweep(addr_space.sweep_size, [AddrIval(b, e, AddrIvalState.FREED) for b, e in bes])
 
 
     def _sweep(self, amount, addr_ivals):
@@ -349,7 +349,7 @@ class SimpleSweepingRevoker(BaseSweepingRevoker):
     def reused(self, alloc_state, stk, begin, end):
         intervals = [i for i in alloc_state.addr_ivals(begin, end) if i.state is AddrIvalState.FREED]
         if intervals:
-            self._sweep(addr_space.size, intervals)
+            self._sweep(addr_space.sweep_size, intervals)
         for ival in intervals:
             alloc_state.revoked(stk, ival.begin, ival.end)
 
@@ -378,7 +378,7 @@ class CompactingSweepingRevoker(BaseSweepingRevoker):
                 incr = (self._sweep_capacity_ivals - len(olaps_coalesced)) < delta
                 addr_bck = min(addr_bck - 0x1000, olaps_coalesced[0].begin)
                 addr_fwd = max(addr_fwd + 0x1000, olaps_coalesced[-1].end)
-            self._sweep(addr_space.size, olaps_coalesced)
+            self._sweep(addr_space.sweep_size, olaps_coalesced)
         for ival in olaps_coalesced:
             alloc_state.revoked(stk, ival.begin, ival.end)
 
