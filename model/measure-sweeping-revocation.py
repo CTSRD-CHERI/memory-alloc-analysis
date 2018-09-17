@@ -108,6 +108,7 @@ class BaseAddrSpaceModel:
 
     def size_measured(self, size):
         self.size = size
+        output.update()
 
     def sweep_size_measured(self, sweep_size):
         self.sweep_size = sweep_size
