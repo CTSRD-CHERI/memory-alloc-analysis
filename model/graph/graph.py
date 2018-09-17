@@ -32,7 +32,8 @@ plt.subplots_adjust(hspace=1)
 
 plt.plot(time_s, data0[y1], time_s, data0[y2], time_s, data0[y3], time_s, data0[y4])
 plt.title('{0} allocator address space usage over time'.format(data0_label))
-plt.legend(['Aspace total', 'Aspace to sweep', 'Aspace of allocator', 'Allocd by allocator'])
+plt.legend(['Aspace total', 'Aspace to sweep', 'Aspace of allocator', 'Allocd by allocator'],
+           loc='lower right', bbox_to_anchor=[1, 1])
 plt.xlabel('Time (s)')
 plt.ylabel('Amount (mb)')
 plt.savefig('{0}-aspace_stats-vs-time.eps'.format(data0_label.lower()))
