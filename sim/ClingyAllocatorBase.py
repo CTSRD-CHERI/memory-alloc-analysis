@@ -373,13 +373,13 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
   # Conditionally revokes the top n segments if the predicate, which is
   # given the number of junk buckets in the largest span, says to.
   #
-  # If given a "revoke" paramter, it must be a generator of a list of
+  # If given a "revoke" paramter, it must be an iterator of
   # bases of junk spans which will be guaranteed to be revoked, even if they
   # are not the largest spans known.  This may be used to force some degree
   # of reuse of small spans, as suggested by Hongyan.
   def _predicated_revoke_best(self, fn, n=None, revoke=[]):
-
-    assert len(list(revoke)) <= self._revoke_k
+    revoke = list(revoke)
+    assert len(revoke) <= self._revoke_k
 
     if n is None :
         n = self._revoke_k
