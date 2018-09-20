@@ -368,7 +368,8 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
   def _mark_allocated(self, reqbase, reqsz) :
     if self._paranoia > PARANOIA_STATE_PER_OPER:
       (qbase, qsz, qv) = self._eva2sst.get(reqbase, coalesce_with_values=sst_at)
-      assert qv in sst_at, ("New allocated mark in bad state", qv)
+      assert qv in sst_at, ("New allocated mark in bad state", \
+        (reqbase, reqsz), (qbase, qsz, qv), list(self._eva2sst))
       assert qbase + qsz >= reqbase + reqsz, "New allocated undersized?"
 
     # Homesteading beyond the wildnerness frontier leaves a TIDY gap
