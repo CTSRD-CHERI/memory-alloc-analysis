@@ -312,7 +312,8 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
 
   def _do_revoke_best_and(self, n=None, revoke=[]) :
 
-    assert len(list(revoke)) <= self._revoke_k, (revoke)
+    revs = list(revoke)
+    assert len(revs) <= self._revoke_k, (revoke)
 
     if n is None :
         n = self._revoke_k
@@ -321,7 +322,7 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
     brss = self._find_largest_revokable_spans(n=n+1)
 
     rset = set()
-    for rloc in revoke :
+    for rloc in revs :
       for (brnj, brloc, brsz) in brss :
         if brloc <= rloc < brloc + brsz :
           rset.add((brnj, brloc, brsz))
