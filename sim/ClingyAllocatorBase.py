@@ -373,7 +373,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
   # Conditionally revokes the top n segments if the predicate, which is
   # given the number of junk buckets in the largest span, says to.
   #
-  # If given a "revoke" paramter, it must be an iterator of
+  # If given a "revoke" paramter, it must be an iterable of
   # bases of junk spans which will be guaranteed to be revoked, even if they
   # are not the largest spans known.  This may be used to force some degree
   # of reuse of small spans, as suggested by Hongyan.
