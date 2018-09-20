@@ -694,6 +694,16 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
   #
   # If you're not convinced by the above, you're exactly the kind of person
   # that --realloc=onlyshrink or --realloc=none are for!
+  #
+  # NB: When making an object smaller, this does not and MUST NOT transition
+  # the tail to JUNK state for pending reuse, because the capabilities we
+  # have will have given out originally still span the whole region and so
+  # could come to overlap later allocations (if this allocation is not
+  # freed, so that they will not be subsets in the revocation test).  A real
+  # revoker may wish to scream loudly if it finds capabilities partially
+  # overlapping the revocation region (subsuming capabilities are presumably
+  # OK, as the allocator holds these).
+  #
   def _try_realloc_yes(self, stk, oeva, nsz):
     if self._paranoia > PARANOIA_STATE_PER_OPER : self._state_asserts()
 
@@ -712,7 +722,8 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
     if nsz <= osz :
       if __debug__ : logging.debug("<_try_realloc shrink eva=%x", oeva)
       # Shrinking is always fine, I suppose
-      # Don't update the block size
+      # Don't update the block size, even if it's not a bitmap bucket (which
+      # can't be so updated anyway) and don't move anything to JUNK
       return True
 
     if self._issmall(osz) :
@@ -756,6 +767,10 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
 
     return False
 
+  # In-place allocations only if the resulting object is smaller (or no
+  # bigger than size rounded up, in terms of bitmap buckets; we don't have
+  # the original size to enforce a strict shrinkage policy); see caveat
+  # above for why this does not transition any bytes to JUNK.
   def _try_realloc_onlyshrink(self, stk, oeva, nsz):
     if self._paranoia > PARANOIA_STATE_PER_OPER : self._state_asserts()
 
