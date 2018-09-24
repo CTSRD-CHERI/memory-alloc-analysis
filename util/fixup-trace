@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+{ py_cmd=`which pypy3` ;} || { py_cmd=`which python3` ;} && { cpy_cmd=`which python3` ;}
+test $? -eq 0 || { echo "Python 3 not found"; exit 1 ;}
+
+my_dir=`dirname $0`
+
+$py_cmd ${my_dir}/fixup-trace.py $*
