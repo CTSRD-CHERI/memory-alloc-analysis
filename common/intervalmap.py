@@ -163,7 +163,7 @@ class IntervalMap:
 
     def mark(self, loc, sz, v, recursing=0):
         if not self._base <= loc < self._base + self._sz:
-            raise ValueError(loc)
+            raise ValueError(loc, 'off the map')
         d = self.d
         ix = d.bisect_left(loc)
 
@@ -181,6 +181,8 @@ class IntervalMap:
             # Left-aligned change, try coalescing left after change
             if ix != 0 : couldcleft = True
             (szex, vex) = d[loc]
+            if v == vex and szex > sz and not self._coalescing and not recursing:
+                raise ValueError(loc, sz, v, 'new interval is concealed by existing interval of same value')
         elif ix != 0 :
             # Not left-aligned.  Update our notion of self
             ix = ix - 1
@@ -188,7 +190,8 @@ class IntervalMap:
             (szex, vex) = d[k]
 
             assert k < loc and k + szex > loc, 'Off the map (to the right?)'
-    
+            if v == vex and not self._coalescing and not recursing:
+                raise ValueError(loc, sz, v, 'new interval is concealed by existing interval of same value')
             
             if v == vex :
                 # Not left aligned, but spurious in this region
@@ -200,7 +203,6 @@ class IntervalMap:
                     # print("Spurious [%d+%d] (in [%d+%d]), but pushing forward" % (loc, sz, k, szex))
                     self.vcc(vex, v, loc, sz)
                     # Recurse once to change the existing value
-                    # XXX Here docleft required for correctness 
                     return self.mark(k+szex, loc + sz - k - szex, v, recursing + 1)
                 else :
                     #            {  vcc  }
@@ -272,7 +274,6 @@ class IntervalMap:
                 #if ix < len(d)-1: couldcright = True
 
             if szex != sz :
-                # XXX Here docleft required for correctness 
                 self.mark(loc+szex, sz-szex, v, recursing + 1)
                 (sz, _) = d[loc]
 
