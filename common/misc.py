@@ -1,3 +1,6 @@
+from intervaltree import Interval
+from enum import Enum, unique
+
 # Publisher interface ------------------------------------------------- {{{
 
 def _discard(*args, **kwargs): pass
@@ -13,6 +16,49 @@ class Publisher:
     def _publish(self, meth, *args, **kwargs):
         for s in self.__subscribers:
             getattr(s, meth, _discard)(self, *args, **kwargs)
+
+
+# --------------------------------------------------------------------- }}}
+# Address intervals representation ------------------------------------ {{{
+
+@unique
+class AddrIvalState(Enum):
+    ALLOCD  = 1
+    FREED   = 2
+    REVOKED = 3
+
+    MAPD    = 4
+    UNMAPD  = 5
+
+    __repr__ = Enum.__str__
+
+
+class AddrIval(Interval):
+    __slots__ = ()
+
+    def __new__(cls, begin, end, state):
+        return super().__new__(cls, begin, end, state)
+
+    @property
+    def state(self):
+        return self.data
+    # For compatibility with the IntervalMap
+    @property
+    def value(self):
+        return self.state
+
+    @property
+    def size(self):
+        return self.end - self.begin
+
+    def __repr__(self):
+        r = super().__repr__()
+        r = r.replace('Interval', __class__.__name__, 1)
+        r = r.replace(str(self.begin), hex(self.begin)[2:])
+        r = r.replace(str(self.end), hex(self.end)[2:])
+        return r
+
+    __str__ = __repr__
 
 # --------------------------------------------------------------------- }}}
 # Data-structure utility functions ------------------------------------ {{{

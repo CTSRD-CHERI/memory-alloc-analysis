@@ -28,7 +28,6 @@
 # SUCH DAMAGE.
 
 from collections import namedtuple
-from enum import Enum, unique
 import sys
 import numpy
 import logging
@@ -36,55 +35,14 @@ import argparse
 import re
 import itertools
 
-from intervaltree import Interval
-
 if __name__ == "__main__" and __package__ is None:
     import os
     sys.path.append(os.path.dirname(sys.path[0]))
 
 from common.intervalmap import IntervalMap
 from common.misc import Publisher
+from common.misc import AddrIval, AddrIvalState
 from common.run import Run
-
-@unique
-class AddrIvalState(Enum):
-    ALLOCD  = 1
-    FREED   = 2
-    REVOKED = 3
-
-    MAPD    = 4
-    UNMAPD  = 5
-
-    __repr__ = Enum.__str__
-
-
-class AddrIval(Interval):
-    __slots__ = ()
-
-    def __new__(cls, begin, end, state):
-        return super().__new__(cls, begin, end, state)
-
-    @property
-    def state(self):
-        return self.data
-    # Required for compatibility with the IntervalMap
-    @property
-    def value(self):
-        return self.state
-
-    @property
-    def size(self):
-        return self.end - self.begin
-
-    def __repr__(self):
-        r = super().__repr__()
-        r = r.replace('Interval', __class__.__name__, 1)
-        r = r.replace(str(self.begin), hex(self.begin)[2:])
-        r = r.replace(str(self.end), hex(self.end)[2:])
-        return r
-
-    __str__ = __repr__
-
 
 class BaseAddrSpaceModel:
     def __init__(self, **kwds):

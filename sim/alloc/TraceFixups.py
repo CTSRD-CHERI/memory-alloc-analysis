@@ -17,53 +17,17 @@
 # Preamble ------------------------------------------------------------ {{{
 
 import argparse
-from enum import Enum, unique
 import logging
 
-from intervaltree import Interval, IntervalTree
+from intervaltree import IntervalTree
 
 from common.misc import Publisher
+from common.misc import AddrIval
+from common.misc import AddrIvalState as AState
 
 if __name__ == "__main__" and __package__ is None:
   import os
   sys.path.append(os.path.dirname(sys.path[0]))
-
-# --------------------------------------------------------------------- }}}
-# State classes ------------------------------------------------------- {{{
-@unique
-class VAState(Enum):
-  ALLOCD  = 1
-  FREED   = 2
-  REVOKED = 3
-
-  __repr__ = Enum.__str__
-
-@unique
-class VMState(Enum):
-  MAPD  = 1
-  UNMAPD  = 2
-
-  __repr__ = Enum.__str__
-
-class AddrInterval(Interval):
-  __slots__ = ()
-
-  def __new__(cls, begin, end, state):
-    return super().__new__(cls, begin, end, state)
-
-  @property
-  def state(self):
-    return self.data
-
-  def __repr__(self):
-    r = super().__repr__()
-    r = r.replace('Interval', __class__.__name__, 1)
-    r = r.replace(str(self.begin), hex(self.begin)[2:])
-    r = r.replace(str(self.end), hex(self.end)[2:])
-    return r
-
-  __str__ = __repr__
-
 
 # --------------------------------------------------------------------- }}}
 class Allocator(Publisher):
@@ -77,10 +41,10 @@ class Allocator(Publisher):
     self._ts = tslam
 
     self._aa = IntervalTree()
-    self._aa.add(AddrInterval(0, 2**64, VAState.REVOKED))
+    self._aa.add(AddrIval(0, 2**64, AState.REVOKED))
 
     self._am = IntervalTree()
-    self._am.add(AddrInterval(0, 2**64, VMState.UNMAPD))
+    self._am.add(AddrIval(0, 2**64, AState.UNMAPD))
 
     self._ls = {}
 
@@ -107,14 +71,14 @@ class Allocator(Publisher):
     overlaps_m = self._am[begin:end]
 
     if not self._arg.skip_map :
-      overlaps_unmapped = [o for o in overlaps_m if o.state == VMState.UNMAPD]
+      overlaps_unmapped = [o for o in overlaps_m if o.state == AState.UNMAPD]
       if overlaps_unmapped:
         logging.warning("Allocation ts=%d b=%x e=%x overlaps unmap=%r",
           self._ts(), begin, end, overlaps_unmapped)
 
       # XXX fix by mapping pages
 
-    overlaps_allocated = [o for o in overlaps_a if o.state == VAState.ALLOCD]
+    overlaps_allocated = [o for o in overlaps_a if o.state == AState.ALLOCD]
     if overlaps_allocated:
       logging.error("Allocation ts=%d b=%x e=%x overlaps alloc=%r",
         self._ts(), begin, end, overlaps_allocated)
@@ -123,7 +87,7 @@ class Allocator(Publisher):
           self._publish('free', '---', oa.begin)
 
     self._aa.chop(begin,end)
-    self._aa.add(AddrInterval(begin,end,VAState.ALLOCD))
+    self._aa.add(AddrIval(begin,end,AState.ALLOCD))
 
   def allocd(self, stk, begin, end):
     self._allocd(begin, end)
@@ -138,12 +102,12 @@ class Allocator(Publisher):
     overlaps_m = self._am[addr:end]
 
     if not self._arg.skip_map :
-      overlaps_unmapped = [o for o in overlaps_m if o.state == VMState.UNMAPD]
+      overlaps_unmapped = [o for o in overlaps_m if o.state == AState.UNMAPD]
       if overlaps_unmapped:
         logging.error("Free ts=%d a=%x overlaps unmap=%r",
                       self._ts(), addr, overlaps_unmapped)
 
-    overlaps_free = [o for o in overlaps_a if o.state == VAState.FREED]
+    overlaps_free = [o for o in overlaps_a if o.state == AState.FREED]
     if overlaps_free:
       if len(overlaps_free) == 1 and \
          self._arg.drop_safe :
@@ -157,7 +121,7 @@ class Allocator(Publisher):
         if self._arg.fix :
           self._publish('allocd', '---', addr, end)
 
-    allocations = [o for o in overlaps_a if o.state == VAState.ALLOCD]
+    allocations = [o for o in overlaps_a if o.state == AState.ALLOCD]
     if len(allocations) > 1 or (allocations != [] and overlaps_free != []) :
         logging.error("Free ts=%d a=%x multiply-attested alloc=%r free=%r",
                       self._ts(), addr, allocations, overlaps_free)
@@ -179,7 +143,7 @@ class Allocator(Publisher):
           end = max(end, a.end)
 
     self._aa.chop(addr, end)
-    self._aa.add(AddrInterval(addr, end, VAState.FREED))
+    self._aa.add(AddrIval(addr, end, AState.FREED))
 
     return True
 
@@ -224,7 +188,7 @@ class Allocator(Publisher):
 
     for (begin,end) in spans:
       overlaps = self._aa[begin:end]
-      overlaps_allocated = [o for o in overlaps if o.state == VAState.ALLOCD]
+      overlaps_allocated = [o for o in overlaps if o.state == AState.ALLOCD]
       if overlaps_allocated:
         logging.warning("Revocation ts=%d b=%x e=%x overlaps alloc=%r",
           self._ts(), begin, end, overlaps_allocated)
