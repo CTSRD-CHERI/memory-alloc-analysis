@@ -168,12 +168,12 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
     self._bucklog = 16
     self._pagelog = 12
 
-    self._maxbix = 0    # Next never-touched bucket index (AHWM)
+    self._maxbix = 1    # Next never-touched bucket index (AHWM)
     self._szbix2ap = {} # BUMP allocation pointer by size and bix
     self._bix2szbm = {} # BUMP and WAIT buckets' size and bitmaps
     self._njunkb = 0    # Number of buckets in JUNK state
     self._nbwb = 0      # Number of buckets in BUMP|WAIT states
-    self._bix2state = IntervalMap(0, 2**(64 - self._bucklog), BuckSt.AHWM)
+    self._bix2state = IntervalMap(2**self._bucklog, 2**(64 - self._bucklog) - 1, BuckSt.AHWM)
     self._brscache = None   # Biggest revokable span cache
 
     self._junklru = dllist()    # List of all revokable spans, LRU
@@ -317,7 +317,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
         return [self._brscache]
 
     bests = [(0, -1, -1)] # [(njunk, bix, sz)] in ascending order
-    cursorbix = 0
+    cursorbix = next(loc for (loc, _, _) in self._bix2state)
     while cursorbix < self._maxbix :
         # Exclude AHWM, which is like TIDY but would almost always be biggest
         (qbase, qsz, qv) = self._bix2state.get(cursorbix,
@@ -807,15 +807,16 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
     from PIL import ImageDraw
 
     zo = img.width.bit_length() << 1
+    basebix = next(loc for (loc, _, _) in self._bix2state)
 
     # Paint most of the buckets; exclude AHWM since that's big
     renderSpansZ(img, zo,
-        ((loc, sz, bst2color[st])
+        ((loc - basebix, sz, bst2color[st])
           for (loc, sz, st) in self._bix2state if st != BuckSt.AHWM))
 
     # Paint over small WAIT buckets with some occupancy information
     renderSpansZ(img, zo,
-        ((bix, 1, self.occshade(self._bix2szbm[bix]))
+        ((bix - basebix, 1, self.occshade(self._bix2szbm[bix]))
           for (loc, sz, st) in self._bix2state
             if st == BuckSt.WAIT
           for bix in range(loc,loc+sz)
@@ -826,13 +827,13 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
     # blocks, but that's fine)
     brss = self._find_largest_revokable_spans(n=1)
     if brss != [] and brss[0][1] is not None :
-        renderSpansZ(img, zo, [(brss[0][1], brss[0][2], cBRS)])
+        renderSpansZ(img, zo, [(brss[0][1] - basebix, brss[0][2], cBRS)])
 
     # Paint over the oldest JUNK span
     oldestj = self._junklru.first
     if oldestj is not None :
-        (qbix, qsz, _) = self._bix2state.get(oldestj.value, coalesce_with_values=st_tj)
-        renderSpansZ(img, zo, [(qbix, qsz, cOJS)])
+        (qbix, qsz, _) = self._bix2state.get(oldestj.value[0], coalesce_with_values=st_tj)
+        renderSpansZ(img, zo, [(qbix - basebix, qsz, cOJS)])
 
 # --------------------------------------------------------------------- }}}
 

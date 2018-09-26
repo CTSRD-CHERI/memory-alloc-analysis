@@ -98,6 +98,8 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
 
     '_tslam'   , # fetch the current trace timestamp
 
+    '_basepg'  , # Bottom-most page index to use
+
     '_brscache', # cached biggest revokable span
     '_eva2sst' , # Emulated Virtual Address to Segment STate
     '_eva2sz'  , # EVA to size for outstanding allocations (WAIT states)
@@ -157,11 +159,14 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
 # --------------------------------------------------------------------- }}}
 
     self._pagelog  = 12
+    self._basepg = 1
+    baseva = self._basepg * 2**self._pagelog
 
     self._brscache = None
-    self._eva2sst  = IntervalMap(0, 2**64, SegSt.AHWM)
+    self._eva2sst  = IntervalMap(baseva, 2**64 - baseva, SegSt.AHWM)
     self._eva2sz   = {}
-    self._evp2pst  = IntervalMap(0, 2**(64 - self._pagelog), PageSt.UMAP)
+    self._evp2pst  = IntervalMap(self._basepg,
+                      2**(64 - self._pagelog) - self._basepg, PageSt.UMAP)
     self._junklru  = dllist()
     self._junkadn  = {}
     self._njunk    = 0
@@ -169,7 +174,7 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
     self._nwait    = 0
     self._tidylst  = dllist()
     self._tidyadn  = SortedDict()
-    self._wildern  = 0
+    self._wildern  = baseva
 
 # --------------------------------------------------------------------- }}}
 # Size-related utility functions -------------------------------------- {{{
@@ -292,7 +297,7 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
         return [self._brscache]
 
     bests = [(0, -1, -1)] # [(njunk, loc, sz)] in ascending order
-    cursorloc = 0
+    cursorloc = next(loc for (loc, _, _) in self._eva2sst)
     while cursorloc < self._wildern :
         # Exclude AHWM, which is like TIDY but would almost always be biggest
         (qbase, qsz, qv) = self._eva2sst.get(cursorloc,
@@ -530,22 +535,26 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
       SegSt.JUNK : 0xFF0000,
     }
 
+    baseva = self._basepg * 2**self._pagelog
+
     zo = img.width.bit_length() << 1
 
     renderSpansZ(img, zo,
-      ((loc >> self._alignlog, sz >> self._alignlog, sst2color[st])
-        for (loc, sz, st) in self._eva2sst.irange(0,self._wildern)))
+      (((loc - baseva) >> self._alignlog, sz >> self._alignlog, sst2color[st])
+        for (loc, sz, st) in self._eva2sst.irange(baseva,self._wildern)))
 
     # Paint over the oldest JUNK span
     oldestj = self._junklru.first
     if oldestj is not None :
         (qb, qsz) = oldestj.value
+        qb -= baseva
         renderSpansZ(img, zo, [(qb >> self._alignlog, qsz >> self._alignlog, 0xFF00FF)])
 
     # Paint over the oldest TIDY span
     oldestt = self._tidylst.first
     if oldestt is not None :
         (qb, qsz) = oldestt.value
+        qb -= baseva
         renderSpansZ(img, zo, [(qb >> self._alignlog, qsz >> self._alignlog, 0x00FFFF)])
 
 

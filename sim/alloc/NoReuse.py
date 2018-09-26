@@ -16,7 +16,7 @@ class Allocator (RenamingAllocatorBase):
     super().__init__()
     self._eva2sz = {}
     self._maxeva = 0
-    self._state = IntervalMap(0, 2**64, False)
+    self._state = IntervalMap(4096, 2**64, False)
 
   def _alloc(self, stk, sz):
     # Impose a minimum size on all allocations, so that, in particular,
