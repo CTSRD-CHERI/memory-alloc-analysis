@@ -25,7 +25,7 @@ class Allocator(TraditionalAllocatorBase):
     self._eva2oid = {}
     self._oid = 0
 
-  def _alloc_place(self, _stk, _sz, _tidys) :
+  def _alloc_place(self, _stk, _sz) :
     self._oid += 1
 
     if __debug__ : logging.debug(">_alloc_place: oid=%d", self._oid)
