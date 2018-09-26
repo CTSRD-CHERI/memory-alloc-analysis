@@ -82,7 +82,7 @@ class MetadataTracker() :
         now = self._tslam()
         nsz = etva - ntva
 
-        if self._tva2oid.get(ntva, None) is not None :
+        if ntva != otva and self._tva2oid.get(ntva, None) is not None :
             # Synthesize a free before we clobber something
             logging.warn("realloc inserting free for tva=%x at ts=%d", ntva, now)
             self.freed("", ntva)
@@ -109,9 +109,6 @@ class MetadataTracker() :
             self._sfree += osz
 
     def finish(self) :
-      # Record the never-freed objects
-      self._tslam = lambda : None
-
       # Can't just iterate the keys, because free deletes.  So just repeatedly
       # restart a fresh iterator.
       while self._tva2oid != {} :
@@ -134,37 +131,57 @@ if __name__ == "__main__" and __package__ is None:
     sys.exit(-1)
 
   con = sqlite3.connect(args.database)
+  con.execute("CREATE TABLE stacks "
+              "(stkid INTEGER PRIMARY KEY NOT NULL"
+              ", stk TEXT UNIQUE NOT NULL)")
   con.execute("CREATE TABLE allocs "
               "(oid INTEGER PRIMARY KEY NOT NULL" # Object ID
               ", sz INTEGER NOT NULL"             # SiZe
-              ", stk TEXT NOT NULL"               # STacK
+              ", stkid TEXT NOT NULL"             # STacK
               ", ats INTEGER NOT NULL"            # Allocation Time Stamp
               ", rts INTEGER"                     # Reallocation Time Stamp
               ", fts INTEGER"                     # Free Time Stamp
-              ", sftf INTEGER NOT NULL)")         # Sum Free at Time of Free/Realloc
+              ", sftf INTEGER NOT NULL"           # Sum Free at Time of Free/Realloc
+              ", FOREIGN KEY(stkid) REFERENCES stacks(stkid)"
+              ")")
   con.execute("CREATE TABLE reallocs "
               "(oid INTEGER NOT NULL"             # Object ID
               ", osz INTEGER NOT NULL"            # Old SiZe
               ", nsz INTEGER NOT NULL"            # New SiZe
-              ", stk TEXT NOT NULL"               # STacK
+              ", stkid INTEGER NOT NULL"          # STacK
               ", ats INTEGER NOT NULL"            # Allocaton Time Stamp
               ", fts INTEGER"                     # Free Time Stamp
-              ", sftf INTEGER NOT NULL)")         # Sum Free at Time of Free
+              ", sftf INTEGER NOT NULL"           # Sum Free at Time of Free
+              ", FOREIGN KEY(stkid) REFERENCES stacks(stkid)"
+              ")")
 
+  def istk(stk) :
+    con.execute("INSERT OR IGNORE INTO stacks (stk) VALUES (?)", (stk,))
+    q = con.execute("SELECT stkid FROM stacks WHERE stk = ?", (stk,))
+    for (stkid,) in q : return stkid
+
+  na = 0
   def ia(oid, amd, irtf, fts) :
+    global na
     (astk, ats, asz) = amd
     (irt, sftf) = irtf
+    stkid = istk(astk)
     con.execute("INSERT INTO allocs "
-                "(oid,sz,stk,ats,rts,fts,sftf) VALUES (?,?,?,?,?,?,?)",
-                (oid,asz,astk,ats,irt,fts,sftf)
+                "(oid,sz,stkid,ats,rts,fts,sftf) VALUES (?,?,?,?,?,?,?)",
+                (oid,asz,stkid,ats,irt,fts,sftf)
     )
+    na += 1
 
+  nr = 0
   def ir(oid, rmd, fts, sftf) :
+    global nr
     (rstk, rts, rosz, rnsz) = rmd
+    stkid = istk(rstk)
     con.execute("INSERT INTO reallocs "
-                "(oid,osz,nsz,stk,ats,fts,sftf) VALUES (?,?,?,?,?,?,?)",
-                (oid,rosz,rnsz,rstk,rts,fts,sftf)
+                "(oid,osz,nsz,stkid,ats,fts,sftf) VALUES (?,?,?,?,?,?,?)",
+                (oid,rosz,rnsz,stkid,rts,fts,sftf)
     )
+    nr += 1
 
   run = Run(sys.stdin)
   tslam = lambda : run.timestamp_ns
@@ -174,8 +191,12 @@ if __name__ == "__main__" and __package__ is None:
 
   # Mark in database as never freed.  Could also leave the _tslam adjustment
   # out for a "free on exit" kind of thing.
-  # at._tslam = lambda : None
+  at._tslam = lambda : None
   at.finish()
 
   con.commit()
   con.close()
+
+  print("Aggregate statistics", file=sys.stderr)
+  print("  %d allocations" % na, file=sys.stderr)
+  print("  %d reallocs" % nr, file=sys.stderr)
