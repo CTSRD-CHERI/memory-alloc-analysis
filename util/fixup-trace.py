@@ -1,3 +1,32 @@
+# Copyright (c) 2018  Lucian Paul-Trifu
+# Copyright (c) 2018  Nathaniel Wesley Filardo
+# All rights reserved.
+#
+# This software was developed by SRI International and the University of
+# Cambridge Computer Laboratory under DARPA/AFRL contract (FA8750-10-C-0237)
+# ("CTSRD"), as part of the DARPA CRASH research programme.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+# 1. Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+# OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+# HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+# LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+# OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+# SUCH DAMAGE.
+
 import sys
 import logging
 import argparse
@@ -14,18 +43,82 @@ ALLOCD = AddrIvalState.ALLOCD
 FREED = AddrIvalState.FREED
 
 
-# TODO:
-# - mmap/munmap
+# Fixup rationale
+# ===============
 #
-# allocd/freed w.r.t. mmap/munmap does not entirelay make sense at this point,
-# as none of the models or simulations use them w.r.t. one another
+# * Frees of non-allocation (Unmatched frees)
+#
+# Policy: unmatched frees are dropped.
+#
+# The alternative of inserting an alloc just before the free would skew object
+# lifetime estimates and would be of little use in modelling memory allocation.
+# Thus, dropping the free is apparently better than fabricating an allocation.
+#
+#
+# * Frees within an allocated region (Misfrees)
+#
+# Policy: misfrees are replaced with free+alloc to shrink the allocation,
+# freeing it from there onwards.
+#
+# Misfrees in the trace may be caused by e.g. use of wrong pointers, or by
+# something like a missing free+alloc.
+#
+# If use of wrong pointer, it is allocator-specific behaviour: the allocator may
+# be able to deallocate the entire allocation, it may deallocate from there
+# onwards, or it may ignore it.  If the former, this policy will cause slight
+# overestimation of the allocation amount.  However, it is probable that the
+# trace later contains an allocation of that region, which will deallocate the
+# shrinked region (see Overlapping allocs), and overestimate object lifetime in
+# proportion with the reuse frequency.  If the second, this policy is right.
+# If the latter, this policy will underestimate the amount of space deallocated,
+# but be right about the object lifetime.
+# On the other hand, deallocating the entire allocation underestimates in 2/3
+# cases, and later causes a further fixup of unmatched free in the second case.
+# And experiments with ignoring misfrees show address space being steadily
+# leaked.  Thus, if the misfree is caused by use of wrong pointer, this policy
+# is better than the other two alternatives.
+#
+# If something like a missing free+alloc, this policy will pair the free with
+# part of an older alloc, while allowing for complete deallocation later in the
+# trace (see Overlapping allocs).  Ignoring the misfree is much more susceptible
+# to address space leaking.
+#
+#
+# * Allocs over allocated region (Overlapping allocs)
+#
+# Policy: overlapping allocs first free the underlying allocations.
+#
+# This policy assumes the overlapping allocation to be accurate, and makes the
+# trace catch up on missed alloc+frees.  It is a counterbalance for the c.f.
+# Misfrees policy.
+#
+#
+# * Reallocs of non-allocation (Unmatched realloc)
+#
+# Policy: unmatched reallocs are turned into allocs.
+#
+# The rationale is similar to that of Unmatched frees.
+#
+#
+# * Reallocs within an allocated region (Misrealloc)
+#
+# Misreallocs are treated as misfrees and turned into allocs.  See Misfrees for
+# the argument for treating them as misfrees.  Regarding turning them into
+# allocs, the argument is similar to the one for the Unmatched frees policy:
+# the alternative of keeping them as reallocs by inserting an alloc before it
+# with similar timestamp is apparently worse.
 
+
+# TODO:
+# - mmap and munmap
+# Note: fixups of mmap/munmap w.r.t. allocd/freed does not entirelay make sense
+# at this point, as none of the models or simulations really reason about them
+# w.r.t. one another.
 class TraceFixups:
     def __init__(self):
         bkg_ival = AddrIval(0, 2**64, None)
         self._addr_ivals = \
             IntervalMap.from_valued_interval_domain(bkg_ival, coalescing=False)
-
 
     def allocd(self, stk, begin, end):
         self._allocd(begin, end)
@@ -36,68 +129,70 @@ class TraceFixups:
         overlaps = self._addr_ivals[begin:end]
         overlaps_allocd = [o for o in overlaps if o.state is ALLOCD]
         if overlaps_allocd:
-            ivals_new = []
             for o in overlaps_allocd:
                 inew = AddrIval(o.begin, o.end, FREED)
-                ivals_new.append(inew)
                 self._addr_ivals.add(inew)
                 trace.freed(None, '', inew.begin)
-            if overlaps_allocd[0].begin < ival.begin:
-                o = overlaps_allocd[0]
-                inew = AddrIval(o.begin, ival.begin, ALLOCD)
-                ivals_new.append(inew)
-                self._addr_ivals.add(inew)
-                trace.allocd(None, '', inew.begin, inew.end)
-            if overlaps_allocd[-1].end > ival.end:
-                o = overlaps_allocd[-1]
-                inew = AddrIval(ival.end, o.end, ALLOCD)
-                ivals_new.append(inew)
-                self._addr_ivals.add(inew)
-                trace.allocd(None, '', inew.begin, inew.end)
-            reallocs = len(ivals_new) - len(overlaps_allocd)
-            logger.info('%d\tI: inserted %d frees and free+alloc(s) %s before '
-                        'overlaid %s %s', run.timestamp_ns,
-                        len(overlaps_allocd) - reallocs, ivals_new[-reallocs:],
-                        caller, ival)
+            logger.info('%d\tI: inserted %d frees before overlapping %s %s',
+                        run.timestamp_ns, len(overlaps_allocd), caller, ival)
 
         self._addr_ivals.add(ival)
 
 
     def freed(self, stk, begin):
-        self._freed(begin)
-        trace.freed(None, stk, begin)
-
-    def _freed(self, begin, *, caller='free'):
         overlap = self._addr_ivals[begin]
-        end = overlap.end if overlap.state is not None else min(overlap.end, begin + 4)
-        ival = AddrIval(begin, end, FREED)
-
         if overlap.state in (None, FREED):
-            ival_new = AddrIval(ival.begin, ival.end, ALLOCD)
-            self._addr_ivals.add(ival_new)
-            trace.allocd(None, '', ival_new.begin, ival_new.end)
-            logger.info('%d\tI: inserted alloc before unmatched %s %s',
-                        run.timestamp_ns, caller, ival)
-        elif overlap.state is ALLOCD and ival.begin != overlap.begin:
-            ivals_new = (AddrIval(overlap.begin, overlap.end, FREED),
-                         AddrIval(overlap.begin, ival.begin, ALLOCD),
-                         AddrIval(ival.begin, ival.end, ALLOCD))
-            self._addr_ivals.add(*ivals_new)
-            trace.freed(None, '', ivals_new[0].begin)
-            trace.allocd(None, '', ivals_new[1].begin, ivals_new[1].end)
-            trace.allocd(None, '', ivals_new[2].begin, ivals_new[2].end)
-            logger.info('%d\tI: inserted free+alloc %s before mis%s %s',
-                        run.timestamp_ns, ivals_new[1], caller, ival)
+            logger.info('%d\tI: dropped unmatched free(%x)',
+                        run.timestamp_ns, begin)
+            return
+
+        ival = AddrIval(begin, overlap.end, FREED)
+        if overlap.state is ALLOCD and ival.begin != overlap.begin:
+            inew_allocd = self._shrink_allocd(overlap, ival.begin)
+            logger.info('%d\tI: replaced mis-free(%x) with free+alloc %s',
+                        run.timestamp_ns, begin, inew_allocd)
+            return
 
         self._addr_ivals.add(ival)
+        trace.freed(None, stk, ival.begin)
 
 
-    def reallocd(self, stk, begin_old, begin_new, end_new):
-        self._freed(begin_old, caller='realloc')
+    def reallocd(self, stk, begin, begin_new, end_new):
+        overlap = self._addr_ivals[begin]
+        end = overlap.end if overlap.state is not None else min(overlap.end, begin + 4)
+        ival_freed = AddrIval(begin, end, FREED)
+        if overlap.state in (None, FREED):
+            inew_alloc = AddrIval(begin_new, end_new, ALLOCD)
+            self.allocd(stk, inew_alloc.begin, inew_alloc.end)
+            logger.info('%d\tI: replaced unmatched realloc(%x, %d) with alloc(%d)',
+                        run.timestamp_ns, begin, inew_alloc.size, inew_alloc.size)
+            return
+        if overlap.state is ALLOCD and ival_freed.begin != overlap.begin:
+            inew_alloc = AddrIval(begin_new, end_new, ALLOCD)
+            inew_allocd = self._shrink_allocd(overlap, ival_freed.begin)
+            self.allocd(stk, inew_alloc.begin, inew_alloc.end)
+            logger.info('%d\tI: replaced mis-realloc(%x, %d) with alloc(%d)'
+                        ' and free+alloc %s', run.timestamp_ns, begin,
+                        inew_alloc.size, inew_alloc.size, inew_allocd)
+            return
+        self._addr_ivals.add(ival_freed)
+
         self._allocd(begin_new, end_new, caller='realloc')
-        trace.reallocd(None, stk, begin_old, begin_new, end_new)
+        trace.reallocd(None, stk, begin, begin_new, end_new)
 
 
+    def _shrink_allocd(self, ival_allocd, end_new):
+        inew_freed = AddrIval(ival_allocd.begin, ival_allocd.end, FREED);
+        inew_allocd = AddrIval(ival_allocd.begin, end_new, ALLOCD)
+        self._addr_ivals.add(inew_freed)
+        self._addr_ivals.add(inew_allocd)
+        trace.freed(None, '', inew_freed.begin)
+        trace.allocd(None, '', inew_allocd.begin, inew_allocd.end)
+        return inew_allocd
+
+
+    # XXX-LPT: these would not be needed if the Unrun instance could be a
+    # direct Run listener
     def size_measured(self, size):
         trace.size_measured(None, size)
 
