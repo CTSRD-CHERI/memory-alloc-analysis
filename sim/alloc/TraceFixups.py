@@ -84,7 +84,7 @@ class Allocator(Publisher):
         self._ts(), begin, end, overlaps_allocated)
       if self._arg.fix :
         for oa in overlaps_allocated :
-          self._publish('free', '---', oa.begin)
+          self._publish('free', '', oa.begin)
 
     self._aa.chop(begin,end)
     self._aa.add(AddrIval(begin,end,AState.ALLOCD))
@@ -97,6 +97,7 @@ class Allocator(Publisher):
 # Freeing ------------------------------------------------------------- {{{
 
   def _freed(self, addr):
+    doalloc = False
     end = addr+1 # Will be fixed up later
     overlaps_a = self._aa[addr:end]
     overlaps_m = self._am[addr:end]
@@ -107,31 +108,30 @@ class Allocator(Publisher):
         logging.error("Free ts=%d a=%x overlaps unmap=%r",
                       self._ts(), addr, overlaps_unmapped)
 
+    allocations = [o for o in overlaps_a if o.state == AState.ALLOCD]
     overlaps_free = [o for o in overlaps_a if o.state == AState.FREED]
-    if overlaps_free:
-      if len(overlaps_free) == 1 and \
-         self._arg.drop_safe :
+    if overlaps_free != []:
+      logging.warning("Free ts=%d a=%x overlaps free=%r",
+                        self._ts(), addr, overlaps_free)
+      if allocations == [] and len(overlaps_free) == 1 and self._arg.drop_safe :
         return False
       else :
-        logging.warning("Free ts=%d a=%x overlaps free=%r",
-                        self._ts(), addr, overlaps_free)
         for of in overlaps_free :
-          if of.begin == addr :
+          if of.begin <= addr :
             end = max(end, of.end)
         if self._arg.fix :
-          self._publish('allocd', '---', addr, end)
+          doalloc = True
 
-    allocations = [o for o in overlaps_a if o.state == AState.ALLOCD]
     if len(allocations) > 1 or (allocations != [] and overlaps_free != []) :
         logging.error("Free ts=%d a=%x multiply-attested alloc=%r free=%r",
                       self._ts(), addr, allocations, overlaps_free)
     elif allocations == [] and overlaps_free == [] :
-      if not self._arg.drop_safe :
-        logging.warning("Free ts=%d a=%x no corresponding alloc",
+      logging.warning("Free ts=%d a=%x no corresponding alloc",
           self._ts(), addr)
-        if self._arg.fix :
-          self._publish('allocd', '---', addr, end)
+      if self._arg.fix and not self._arg.drop_safe:
+        doalloc = True
       else : 
+        assert doalloc == False
         return False
     else :
       for a in allocations:
@@ -144,6 +144,9 @@ class Allocator(Publisher):
 
     self._aa.chop(addr, end)
     self._aa.add(AddrIval(addr, end, AState.FREED))
+
+    if doalloc:
+      self._publish('allocd', '', addr, end)
 
     return True
 
@@ -194,7 +197,7 @@ class Allocator(Publisher):
           self._ts(), begin, end, overlaps_allocated)
         if self._arg.fix :
           for oa in overlaps_allocated :
-            self._publish('free', '---', oa.begin)
+            self._publish('free', '', oa.begin)
 
         # XXX fix by freeing
 
