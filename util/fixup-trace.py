@@ -102,11 +102,12 @@ FREED = AddrIvalState.FREED
 #
 # * Reallocs within an allocated region (Misrealloc)
 #
-# Misreallocs are treated as misfrees and turned into allocs.  See Misfrees for
-# the argument for treating them as misfrees.  Regarding turning them into
-# allocs, the argument is similar to the one for the Unmatched frees policy:
-# the alternative of keeping them as reallocs by inserting an alloc before it
-# with similar timestamp is apparently worse.
+# Policy: Misreallocs are treated as misfrees and turned into allocs.
+#
+# See Misfrees for the argument for treating them as misfrees.  Regarding
+# turning them into allocs, the argument is similar to the one for the Unmatched
+# frees policy: the alternative of keeping them as reallocs by inserting an
+# alloc before it with similar timestamp is apparently worse.
 
 
 # TODO:
