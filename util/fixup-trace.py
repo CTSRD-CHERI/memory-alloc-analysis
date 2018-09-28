@@ -1,5 +1,5 @@
-# Copyright (c) 2018  Lucian Paul-Trifu
 # Copyright (c) 2018  Nathaniel Wesley Filardo
+# Copyright (c) 2018  Lucian Paul-Trifu
 # All rights reserved.
 #
 # This software was developed by SRI International and the University of
@@ -194,6 +194,12 @@ class TraceFixups:
 
     # XXX-LPT: these would not be needed if the Unrun instance could be a
     # direct Run listener
+    def mapd(self, stk, begin, end, prot):
+        trace.mapd(None, stk, begin, end, prot)
+
+    def unmapd(self, stk, begin, end):
+        trace.unmapd(None, stk, begin, end)
+
     def size_measured(self, size):
         trace.size_measured(None, size)
 
