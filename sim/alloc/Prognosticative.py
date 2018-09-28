@@ -1,3 +1,13 @@
+# A maximally informed allocator, that knows, with certainty, the right
+# place to put an object so that there is one ever-growing WAIT span at the
+# bottom of the address space.  This is not useful per se, since its
+# knowledge is impossibly oracular, but it may still provide useful insights
+# in visualizations.  It's also a relatively interesting test of various
+# pieces of machinery, including the trace-to-db tool and the
+# TraditionalAllocatorBase (unlike most allocator simulations we have so
+# far, it really rains objects all over the addres space and so stresses the
+# heap models in new ways).
+
 import logging
 import sqlite3
 
@@ -30,8 +40,14 @@ class Allocator(TraditionalAllocatorBase):
 
     if __debug__ : logging.debug(">_alloc_place: oid=%d", self._oid)
 
-    pos = self._tdb.execute("SELECT sftf FROM allocs WHERE oid = ?", (self._oid, )) \
-              .fetchone()[0]
+    row = self._tdb.execute("SELECT sz, sftf FROM allocs WHERE oid = ?", (self._oid, )) \
+              .fetchone()
+
+    # Verify the allocation size matches the database
+    assert row[0] == _sz, "Database corruption?"
+
+    # Extract placement from database, which accumulates sftf from 0, and add base
+    pos = row[1] + self._evp2eva(self._basepg)
 
     if __debug__ : logging.debug("<_alloc_place: oid=%d pos=%x", self._oid, pos)
 
@@ -60,9 +76,16 @@ class Allocator(TraditionalAllocatorBase):
 
         if __debug__ : logging.debug(">reallocd oid=%d ts=%d", oid, now)
 
-        pos = self._tdb.execute("SELECT sftf FROM reallocs WHERE oid = ? AND ats = ?",
+        row = self._tdb.execute("SELECT osz, nsz, sftf FROM reallocs WHERE oid = ? AND ats = ?",
                         (oid, now)) \
-                  .fetchone()[0]
+                  .fetchone()
+
+        # Verify sizes in database
+        assert row[0] == self._eva2sz[self._tva2eva[otva]]
+        assert row[1] == sz
+
+        # Extract placement from database, which accumulates sftf from 0, and add base
+        pos = row[2] + self._evp2eva(self._basepg)
         
         self._mark_allocated(pos, sz)
         self._ensure_mapped(stk, pos, sz)
