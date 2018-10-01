@@ -186,13 +186,21 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
     def revoked(self, stk, *bes):
         if not isinstance(bes[0], tuple):
             bes = [(bes[0], bes[1])]
-        err_str = ''
-        for begin, end in bes:
-            ivals_allocd = [ival for ival in self.addr_ivals(begin, end) if ival.state is AddrIvalState.ALLOCD]
-            if ivals_allocd:
-                err_str += 'Bug: revoking address intervals between {0:x}-{1:x} that are still allocated {2}\n'\
-                           .format(begin, end, ivals_allocd)
-        assert not err_str, err_str
+        query_and_overlaps = [((b, e), self.addr_ivals(b, e)) for b, e in bes]
+        overlaps_allocd = [i for i in itertools.chain(*(overlaps for _, overlaps in query_and_overlaps))
+                           if i.state is AddrIvalState.ALLOCD]
+        if overlaps_allocd:
+            logger.critical('%d\tBug: revoking address intervals that are still allocated %s',
+                         run.timestamp, overlaps_allocd)
+            sys.exit(1)
+        misrevokes = [[i for i in overlaps if i.state is AddrIvalState.FREED and (i.begin < b or i.end > e)]
+                      for (b, e), overlaps in query_and_overlaps]
+        if any(misrevokes):
+            query_and_misrevokes = list(zip((AddrIval(b, e, AddrIvalState.REVOKED)
+                                             for (b, e), _ in query_and_overlaps), misrevokes))
+            logger.critical('%d\tBug: revoking intervals that do not fully capture the underlying'
+                            ' freed allocations %s', run.timestamp, query_and_misrevokes)
+            sys.exit(1)
 
         for begin, end in bes:
             ival = AddrIval(begin, end, AddrIvalState.REVOKED)
