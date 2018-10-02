@@ -48,66 +48,95 @@ FREED = AddrIvalState.FREED
 #
 # * Frees of non-allocation (Unmatched frees)
 #
-# Policy: unmatched frees are dropped.
+#   Policy: unmatched frees are dropped.
 #
-# The alternative of inserting an alloc just before the free would skew object
-# lifetime estimates and would be of little use in modelling memory allocation.
-# Thus, dropping the free is apparently better than fabricating an allocation.
+#   The alternative of inserting an alloc just before the free would skew
+#   object lifetime estimates and would be of little use in modelling memory
+#   allocation.  Thus, dropping the free is apparently better than fabricating
+#   an allocation.
 #
 #
 # * Frees within an allocated region (Misfrees)
 #
-# Policy: misfrees are replaced with free+alloc to shrink the allocation,
-# freeing it from there onwards.
+#   Policy: misfrees are replaced with free+alloc to shrink the allocation,
+#   freeing it from there onwards.
 #
-# Misfrees in the trace may be caused by e.g. use of wrong pointers, or by
-# something like a missing free+alloc.
+#   Misfrees in the trace may be caused by e.g. use of bad pointers, or by
+#   something like a missing free+alloc.
 #
-# If use of wrong pointer, it is allocator-specific behaviour: the allocator may
-# be able to deallocate the entire allocation, it may deallocate from there
-# onwards, or it may ignore it.  If the former, this policy will cause slight
-# overestimation of the allocation amount.  However, it is probable that the
-# trace later contains an allocation of that region, which will deallocate the
-# shrinked region (see Overlapping allocs), and overestimate object lifetime in
-# proportion with the reuse frequency.  If the second, this policy is right.
-# If the latter, this policy will underestimate the amount of space deallocated,
-# but be right about the object lifetime.
-# On the other hand, deallocating the entire allocation underestimates in 2/3
-# cases, and later causes a further fixup of unmatched free in the second case.
-# And experiments with ignoring misfrees show address space being steadily
-# leaked.  Thus, if the misfree is caused by use of wrong pointer, this policy
-# is better than the other two alternatives.
+#   The use of a bad pointer is an application bug, which likely leads to
+#   crashes/vulnerabilities due to corrupted allocator metadata.  However, this
+#   rationale does not assume such bugs not to be present.
 #
-# If something like a missing free+alloc, this policy will pair the free with
-# part of an older alloc, while allowing for complete deallocation later in the
-# trace (see Overlapping allocs).  Ignoring the misfree is much more susceptible
-# to address space leaking.
+#   There are several possible fixes we could deploy.  These have some tradeoffs,
+#   and all are a far cry from the ideal of a trace without inconsistencies.
+#
+#      * Synthesize events splitting the allocation so that the base address
+#      remains allocated but the region from the referenced pointer on does
+#      not. (Current policy)
+#
+#      * Adjust the pointer to reference the base of the containing allocation.
+#
+#      * Drop the free event entirely.
+#
+#   If use of bad pointer, it is allocator-specific behaviour: the allocator
+#   may be able to deallocate the entire allocation, it may deallocate from
+#   there onwards, or it may ignore it.  If the former, this policy will cause
+#   slight overestimation of the allocation amount.  However, it is probable
+#   that the trace later contains an allocation of that region, which will
+#   deallocate the shrinked region (see Overlapping allocs), and overestimate
+#   object lifetime in proportion with the reuse frequency.  If the second,
+#   this policy is right.  If the latter, this policy will underestimate the
+#   amount of space deallocated, but be right about the object lifetime.  On
+#   the other hand, deallocating the entire allocation underestimates in 2/3
+#   cases, and later causes a further fixup of unmatched free in the second
+#   case.  And experiments with ignoring misfrees show address space being
+#   steadily leaked.  Thus, if the misfree is caused by use of bad pointer,
+#   this policy is better than the other two alternatives.
+#
+#   If something like a missing free+alloc, this policy will pair the free with
+#   part of an older alloc, while allowing for complete deallocation later in
+#   the trace (see Overlapping allocs).  Ignoring the misfree is much more
+#   susceptible to address space leaking.
+#
+#   Synthesizing events splits the apparent lifetime of the containing object
+#   into regions known to be too long (the containing allocation) and too short
+#   (the synthesized allocation of its base made at the time of the erroneous
+#   free).
 #
 #
 # * Allocs over allocated region (Overlapping allocs)
 #
-# Policy: overlapping allocs first free the underlying allocations.
+#   Policy: overlapping allocs first free the underlying allocations.
 #
-# This policy assumes the overlapping allocation to be accurate, and makes the
-# trace catch up on missed alloc+frees.  It is a counterbalance for the c.f.
-# Misfrees policy.
+#   The entire existing underlying allocations are removed, and no object is
+#   synthesized to replace any existing allocation outside of the new one.
+#
+#   This policy assumes the overlapping allocation to be accurate, and makes
+#   the trace catch up on missed alloc+frees.  It is a counterbalance for the
+#   Misfrees policy (q.v.).
 #
 #
 # * Reallocs of non-allocation (Unmatched realloc)
 #
-# Policy: unmatched reallocs are turned into allocs.
+#   Policy: unmatched reallocs are turned into allocs.
 #
-# The rationale is similar to that of Unmatched frees.
+#   That is, the free() component of the reallocation is ignored.
+#
+#   The rationale is similar to that of Unmatched frees.
 #
 #
-# * Reallocs within an allocated region (Misrealloc)
+# * Reallocs from within an allocated region (Misrealloc)
 #
-# Policy: Misreallocs are treated as misfrees and turned into allocs.
+#   Policy: Misreallocs are treated as misfrees and turned into allocs.
 #
-# See Misfrees for the argument for treating them as misfrees.  Regarding
-# turning them into allocs, the argument is similar to the one for the Unmatched
-# frees policy: the alternative of keeping them as reallocs by inserting an
-# alloc before it with similar timestamp is apparently worse.
+#   That is, misreallocs are considered to be a compound of misfree and
+#   a new allocation.  Without any additional synthetic allocations.
+#
+#   See Misfrees for the argument for treating them as misfrees.  Regarding
+#   turning them into allocs, the argument is similar to the one for the
+#   Unmatched frees policy: the alternative of keeping them as reallocs by
+#   inserting an alloc before it with similar timestamp is apparently worse.
 
 
 # TODO:
