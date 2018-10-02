@@ -123,13 +123,13 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
         overlaps_allocd = [o for o in overlaps if o.state is AddrIvalState.ALLOCD]
         overlaps_freed = [o for o in overlaps if o.state is AddrIvalState.FREED]
         if overlaps_allocd:
-            logger.error('%d\tE: New allocation %s overlaps existing allocations %s, chopping them out',
+            logger.warning('%d\tW: New allocation %s overlaps existing allocations %s, chopping them out',
                  run.timestamp, interval, overlaps_allocd)
 
         if overlaps_freed:
             if args.exit_on_reuse:
-                logger.critical("%d\tE: New allocation %s re-uses %s, exiting as instructed "
-                                "by --exit-on-reuse", run.timestamp, interval, overlaps_freed)
+                logger.critical("%d\tCrit: New allocation %s re-uses %s, exiting as instructed "
+                             "by --exit-on-reuse", run.timestamp, interval, overlaps_freed)
                 sys.exit(1)
             self._publish('reused', stk, begin, end)
         super()._update(interval)
@@ -144,7 +144,7 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
             self.allocd(stk, begin_new, end_new)
             return
         if interval_old.state is not AddrIvalState.ALLOCD:
-            logger.error('%d\tE: Realloc of non-allocated interval %s, assuming it is allocated',
+            logger.warning('%d\tW: Realloc of non-allocated interval %s, assuming it is allocated',
                   run.timestamp, interval_old)
 
         # Free the old allocation, just the part that does not overlap the new allocation
@@ -521,7 +521,7 @@ class SweepEventsOutput(BaseOutput):
 argp = argparse.ArgumentParser(description='Model allocation from a trace and output various measurements')
 argp.add_argument("--log-level", help="Set the logging level.  Defaults to CRITICAL",
                   choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-                  default="CRITICAL")
+                  default="ERROR")
 argp.add_argument("--allocation-map-output", help="Output file for the allocation map (disabled by default)")
 argp.add_argument("--sweep-events-output", help="Output file for the sweep-triggering events (disabled by default)")
 argp.add_argument('revoker', nargs='?', default='CompactingSweepingRevoker',
@@ -529,7 +529,8 @@ argp.add_argument('revoker', nargs='?', default='CompactingSweepingRevoker',
                   " stats gathering.  Revoker types: NaiveSweepingRevokerN, CompactingSweepingRevokerN,"
                   " where N is the revoker capacity (in # of capabilities, defaults to 1024).")
 argp.add_argument("--exit-on-reuse", action="store_true", help="Stop processing and exit with non-zero code "
-                  "if the trace contains re-use of freed memory to which there are unrevoked references")
+                  "if the trace contains re-use of freed memory to which there are unrevoked references."
+                  "  This option is used to verify that the allocation trace is free of memory reuse.")
 args = argp.parse_args()
 
 # Set up logging
