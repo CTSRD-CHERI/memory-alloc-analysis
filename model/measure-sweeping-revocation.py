@@ -109,7 +109,9 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
         super().__init__(calc_total_for_state=AddrIvalState.ALLOCD)
         # _addr_ivals should be protected (i.e. named __addr_ivals), but external visibility
         # is still needed; see intervaltree_query_coalesced and its usage
-        self.__addr_ivals = IntervalMap.from_valued_interval_domain(AddrIval(0, 2**64, None), coalescing=False)
+        bkg_ival = AddrIval(0, 2**64, None)
+        self.__addr_ivals = IntervalMap.from_valued_interval_domain(bkg_ival, coalescing=False)
+        self._realloc_stubs = IntervalMap.from_valued_interval_domain(bkg_ival)
 
 
     @property
@@ -122,9 +124,19 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
         overlaps = self.addr_ivals(begin, end)
         overlaps_allocd = [o for o in overlaps if o.state is AddrIvalState.ALLOCD]
         overlaps_freed = [o for o in overlaps if o.state is AddrIvalState.FREED]
+        overlaps_stubs = [o for o in self._realloc_stubs[begin:end] if o.state is AddrIvalState.FREED]
         if overlaps_allocd:
             logger.warning('%d\tW: New allocation %s overlaps existing allocations %s, chopping them out',
                  run.timestamp, interval, overlaps_allocd)
+        if overlaps_stubs:
+            err_fmt  = '%d\t%s: New allocation %s reuses old allocation stub from realloc '\
+                       '(invalid revocation ahead)'
+            if args.exit_on_unsafe:
+                err_fmt += ', exiting as instructed by --exit-on-unsafe'
+                logger.critical(err_fmt, run.timestamp, 'Crit', interval)
+                sys.exit(1)
+            else:
+                logger.error(err_fmt, run.timestamp, 'E', interval)
 
         if overlaps_freed:
             if args.exit_on_reuse:
@@ -147,21 +159,20 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
             logger.warning('%d\tW: Realloc of non-allocated interval %s, assuming it is allocated',
                   run.timestamp, interval_old)
 
-        # Free the old allocation, just the part that does not overlap the new allocation
+        # If the realloc is in place, just remove the old allocation.  It is not
+        # right to mark it as freed, because if the freed part is then reused,
+        # an invalid revocation that is not aligned with the start of the
+        # reallocated part is generated.  This event is reported as an error
+        # instead (see allocd()), since it is allocator behaviour that cannot be
+        # made safe.
         interval_new = AddrIval(begin_new, end_new, AddrIvalState.ALLOCD)
-        if interval_new.overlaps(interval_old):
-            # Remove the old interval to prevent error reporting in allocd
+        if interval_new.begin == interval_old.begin:
             ival_old_removed = AddrIval(interval_old.begin, interval_old.end, None)
             super()._update(ival_old_removed)
             self.__addr_ivals.add(ival_old_removed)
-            if interval_new.le(interval_old) and interval_new.end != interval_old.end:
-                ival_old_freed_rpart = AddrIval(interval_new.end, interval_old.end, AddrIvalState.FREED)
-                super()._update(ival_old_freed_rpart)
-                self.__addr_ivals.add(ival_old_freed_rpart)
-            if interval_new.ge(interval_old) and interval_old.begin != interval_new.begin:
-                ival_old_freed_lpart = AddrIval(interval_old.begin, interval_new.begin, AddrIvalState.FREED)
-                super()._update(ival_old_freed_lpart)
-                self.__addr_ivals.add(ival_old_freed_lpart)
+            if interval_new.size < interval_old.size:
+                ival_old_stub = AddrIval(interval_new.end, interval_old.end, AddrIvalState.FREED)
+                self._realloc_stubs.add(ival_old_stub)
         else:
             # XXX use _freed and eliminate spurious W/E reporting
             self.freed(stk, begin_old)
@@ -206,6 +217,7 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
             ival = AddrIval(begin, end, AddrIvalState.REVOKED)
             super()._update(ival)
             self.__addr_ivals.add(ival)
+            self._realloc_stubs.add(AddrIval(ival.begin, ival.end, None))
 
 
     def addr_ivals(self, begin=None, end=None):
@@ -539,6 +551,9 @@ argp.add_argument('revoker', nargs='?', default='CompactingSweepingRevoker',
 argp.add_argument("--exit-on-reuse", action="store_true", help="Stop processing and exit with non-zero code "
                   "if the trace contains re-use of freed memory to which there are unrevoked references."
                   "  This option is used to verify that the allocation trace is free of memory reuse.")
+argp.add_argument("--exit-on-unsafe", action="store_true", help="Stop processing and exit with non-zero code "
+                  "if the trace contains unsafe allocation behaviour, such as reuse of old allocation stub "
+                  "from a shrinking realloc.")
 args = argp.parse_args()
 
 # Set up logging
