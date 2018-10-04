@@ -75,6 +75,9 @@ class IntervalMap:
     def add(self, ival):
         self.mark(ival.begin, ival.end - ival.begin, ival.value)
 
+    def remove(self, ival):
+        self.mark(ival.begin, ival.end - ival.begin, self._v)
+
 
     def should_return_ivals(meth):
         def meth_return_ival(self, *args, **kwds):
@@ -160,6 +163,10 @@ class IntervalMap:
 
         for base in d.irange(start, stop, inclusive=(False, False)) :
             yield (base, *d[base])
+
+
+    def unmark(self, loc, sz):
+        self.mark(loc, sz, self._v)
 
     def mark(self, loc, sz, v, recursing=0):
         if not self._base <= loc < self._base + self._sz:
