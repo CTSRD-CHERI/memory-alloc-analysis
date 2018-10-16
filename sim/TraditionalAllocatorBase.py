@@ -126,12 +126,17 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
     argp.add_argument('--revoke-k', action='store', type=int, default=16)
     argp.add_argument('--min-size', action='store', type=int, default=16)
     argp.add_argument('--align-log', action='store', type=int, default=2)
+    argp.add_argument('--unsafe-reuse', action='store_const', const=True,
+                      default=False,
+                      help='free immediately to reusable state')
 
   def _init_handle_args(self, args) :
     self._alignlog        = args.align_log
     self._alignmsk        = (1 << args.align_log) - 1
 
     self._minsize         = args.min_size
+    if args.unsafe_reuse :
+      self._free = self._free_unsafe
 
     self._paranoia        = args.paranoia
     if self._paranoia == 0 and __debug__ :
@@ -514,6 +519,22 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
       self._ensure_unmapped(stk, qb, qsz)
 
     self._maybe_revoke()
+
+  def _free_unsafe(self, stk, loc):
+    if self._paranoia > PARANOIA_STATE_PER_OPER : self._state_asserts()
+    assert self._eva2sst[loc][2] == SegSt.WAIT, "free non-WAIT?"
+
+    # Immediately mark this span as TIDY, rather than JUNK
+    sz = self._eva2sz.pop(loc)
+    self._nwait -= sz
+    self._mark_tidy(loc, sz)
+
+    # If the present TIDY span is quite large, go ahead and do an unmap
+    # XXX configurable policy
+    (qb, qsz, qv) = self._eva2sst.get(loc)
+    assert qv == SegSt.TIDY
+    if qsz > (16 * 2**self._pagelog) :
+      self._ensure_unmapped(stk, qb, qsz)
 
 # --------------------------------------------------------------------- }}}
 # Realloc ------------------------------------------------------------- {{{
