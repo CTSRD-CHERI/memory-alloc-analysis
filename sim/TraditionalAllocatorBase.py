@@ -396,7 +396,7 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
     try :
       return next(loc for (loc,tsz) in self._tidylst
                        if tsz == sz or tsz >= sz + 16)
-    finally :
+    except StopIteration :
       return self._wildern
 
   def _ensure_mapped(self, stk, reqbase, reqsz) :
