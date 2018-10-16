@@ -105,3 +105,7 @@ if (args.render_freq is not None):
   run._trace_listeners += [ RenderTraceListener() ]
 
 run.replay()
+
+# Optional shutdown
+m = getattr(alloc, 'finished', None)
+if m is not None: m()
