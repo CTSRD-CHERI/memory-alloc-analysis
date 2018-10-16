@@ -149,6 +149,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
     else:
         self._try_realloc = self._try_realloc_yes
 
+
 # --------------------------------------------------------------------- }}}
 
   def __init__(self, **kwargs):
@@ -173,7 +174,9 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
     self._bix2szbm = {} # BUMP and WAIT buckets' size and bitmaps
     self._njunkb = 0    # Number of buckets in JUNK state
     self._nbwb = 0      # Number of buckets in BUMP|WAIT states
-    self._bix2state = IntervalMap(2**self._bucklog, 2**(64 - self._bucklog) - 1, BuckSt.AHWM)
+    self._bix2state = IntervalMap(self._maxbix,
+                                  2**(64 - self._bucklog) - self._maxbix,
+                                  BuckSt.AHWM)
     self._brscache = None   # Biggest revokable span cache
 
     self._junklru = dllist()    # List of all revokable spans, LRU
@@ -344,6 +347,19 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
 
     return bests
 
+  def _mark_tidy(self, bix, sz, nj) :
+    # Because we coalesce with TIDY spans while revoking, there may be
+    # several JUNK spans in here.  Go remove all of them from the LRU.
+    for (qbix, qsz, qv) in self._bix2state[bix:bix+sz] :
+      assert qv in st_atj, "Revoking non-revokable span"
+      if qv == BuckSt.JUNK : self._junklru.remove(self._junkbdn.pop(qbix))
+
+    self._njunkb -= nj
+    self._bix2state.mark(bix,sz,BuckSt.TIDY)
+
+    self._brscache = None
+
+
   def _do_revoke(self, ss) :
    if self._paranoia > PARANOIA_STATE_ON_REVOKE : self._state_asserts()
 
@@ -355,19 +371,10 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
          file=sys.stderr)
 
    for (nj, bix, sz) in ss :
-    # Because we coalesce with TIDY spans while revoking, there may be
-    # several JUNK spans in here.  Go remove all of them from the LRU.
-    for (qbix, qsz, qv) in self._bix2state[bix:bix+sz] :
-      assert qv in st_atj, "Revoking non-revokable span"
-      if qv == BuckSt.JUNK : self._junklru.remove(self._junkbdn.pop(qbix))
-
-    self._njunkb -= nj
-    self._bix2state.mark(bix,sz,BuckSt.TIDY)
+      self._mark_tidy(bix, sz, nj)
 
    self._publish('revoked', "---",
       [(self._bix2va(bix), self._bix2va(bix+sz)) for (_, bix, sz) in ss])
-
-   self._brscache = None
 
 
   # Conditionally revokes the top n segments if the predicate, which is
@@ -583,6 +590,14 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
 # --------------------------------------------------------------------- }}}
 # Free ---------------------------------------------------------------- {{{
 
+  # Allow for parametrizable behavior when a bucket becomes free.  Should
+  # return one of
+  #   None  : leave the bucket considered allocated
+  #   True  : mark the bucket as JUNK
+  #   False : mark the bucket as TIDY immediately
+  def _on_bucket_free(self, bix, bsz):
+    return True
+
   # Mark a (span of) bucket(s) JUNK.
   #
   # This may change the largest revocable span, so carry out a single probe
@@ -614,6 +629,13 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
         self._brscache = None
 
     dll_im_coalesced_insert(bix,bsz,self._bix2state,self._junklru,self._junkbdn)
+
+  def _free_bix(self, bix, bsz) :
+    r = self._on_bucket_free(bix, bsz)
+    if r == True    : self._mark_junk(bix, bsz)
+    elif r == False : self._mark_tidy(bix, bsz, 0)
+    elif r is None  : pass
+    else : assert False, "Invalid return from _on_free_bix: %r" % r
 
   def _free(self, stk, eva) :
     if __debug__ : logging.debug(">_free eva=%x", eva)
@@ -657,7 +679,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
           ("Freeing bucket still registered as bump block", \
             bix, sz, self._bix2szbm[bix], self._szbix2ap.get(sz))
         assert spanst == BuckSt.WAIT, "Freeing bucket in non-WAIT state"
-        self._mark_junk(bix, 1)
+        self._free_bix(bix, 1)
 
         # XXX At the moment, we only unmap when the entire bucket is free.
         # This is just nwf being lazy and not wanting to do the bit math for
@@ -677,7 +699,8 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
       assert spanbase <= bix and bix + bsz <= spanbase + spansize, \
         "Mismatched bucket states of large allocation"
 
-      self._mark_junk(bix, bsz)
+
+      self._free_bix(bix, bsz)
       self._publish('unmapd', stk, self._bix2va(bix), self._bix2va(bix+bsz))
       self._maybe_revoke()
     if __debug__ : logging.debug("<_free eva=%x", eva)

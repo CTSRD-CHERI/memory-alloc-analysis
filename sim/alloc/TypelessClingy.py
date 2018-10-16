@@ -32,6 +32,11 @@ class Allocator(ClingyAllocatorBase):
     argp.add_argument('--best-fit', action='store_const',
                       const=True, default=False)
 
+    # Reuse policy
+    argp.add_argument('--unsafe-reuse', action='store_const', const=True,
+                      default=False,
+                      help='free immediately to reusable state')
+
   def _init_handle_args(self, args):
     super(__class__,self)._init_handle_args(args)
     self._overhead_factor = args.overhead_factor
@@ -44,6 +49,9 @@ class Allocator(ClingyAllocatorBase):
     self._lastrevt = 0  # Time of last revocation pass
 
     self._bestfit = args.best_fit
+
+    if args.unsafe_reuse :
+      self._on_bucket_free = self._on_bucket_free_unsafe
 
   def _maybe_revoke(self):
     # Revoke only if all of
@@ -90,3 +98,4 @@ class Allocator(ClingyAllocatorBase):
       # Just go grab the first TIDY bucket span large enough
       return next(loc for (loc,tsz) in tidys if tsz >= sz)
 
+  def _on_bucket_free_unsafe(self, bix, bsz): return False
