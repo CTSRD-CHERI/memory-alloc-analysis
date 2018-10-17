@@ -11,7 +11,7 @@ if __name__ == "__main__" and __package__ is None:
     sys.path.append(os.path.dirname(sys.path[0]))
     logging.basicConfig(level=logging.INFO)
 
-from stats.allochist import draw as ahdraw
+import stats.allochist as ah
 
 argp = argparse.ArgumentParser(description='Generate histogram from allocation trace database')
 argp.add_argument('database', action='store', help="Input database")
@@ -19,6 +19,8 @@ argp.add_argument('n', nargs='?', action='store', type=int, default=5)
 argp.add_argument('--stk-pfxre', action='store', type=ast.literal_eval, default=[],
                   help="Filter stack by prefix list of REs"
                  )
+argp.add_argument('--free-at-exit', action='store_const', const=True, default=False,
+                  help="Consider all objects free at end of trace")
 argp.add_argument('--just-testing', action='store', type=int, default=0,
                   help="Use a very small subset of allocations to test filters; 2 to disable rendering, too"
                  )
@@ -36,6 +38,17 @@ if args.just_testing != 0 :
 con = sqlite3.connect(args.database)
 con.execute("""PRAGMA temp_store = 1 ;""")
 con.execute("""PRAGMA temp_store_directory = "/dev/shm" ;""")
+
+(dt, et) = ah.etsetup(con)
+
+# def tick() :
+#   logging.debug("SQLite tick...")
+# con.set_progress_handler(tick, 100000000)
+
+aet = None
+if args.free_at_exit :
+  # Add one nanosecond so we never see precisely 0 lifetime, since we love log plots
+  aet = et + 1
 
 sstks = con.execute("""SELECT count(*) FROM stacks ;""").fetchone()[0]
 logging.info("Mangling %d stacks...", sstks)
@@ -79,4 +92,4 @@ for (c, stk, mi, ma) in q:
                        """ WHERE stkid IN (SELECT stkid FROM stkmangle WHERE stk = ?)"""
                        """  AND sz BETWEEN ? AND ?""",
                        (stk,mi,ma))
-      ahdraw(out, 10**30, ma, q2)
+      ah.draw(out, dt, ah.makeszf(mi,ma), q2, aet)
