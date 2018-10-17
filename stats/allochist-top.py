@@ -15,6 +15,7 @@ from stats.allochist import draw as ahdraw
 
 argp = argparse.ArgumentParser(description='Generate histogram from allocation trace database')
 argp.add_argument('database', action='store', help="Input database")
+argp.add_argument('n', nargs='?', action='store', type=int, default=5)
 argp.add_argument('--stk-pfxre', action='store', type=ast.literal_eval, default=[],
                   help="Filter stack by prefix list of REs"
                  )
@@ -66,7 +67,7 @@ logging.info("Grouping %d allocs (this may take a long while)...", salloc)
 q = con.execute("""SELECT"""
                 """ COUNT(*) AS c, stk, min(sz), max(sz)"""
                 """ FROM fallocs JOIN stkmangle ON fallocs.stkid == stkmangle.stkid"""
-                """ GROUP BY stk ORDER BY c DESC LIMIT 5""")
+                """ GROUP BY stk ORDER BY c DESC LIMIT ?""", (args.n,))
 for (c, stk, mi, ma) in q:
     out = "%s-%s-%s-all.png" % \
             (os.path.splitext(os.path.basename(args.database))[0], fstr, stk)
