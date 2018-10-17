@@ -22,6 +22,8 @@ if __name__ == "__main__" and __package__ is None:
 
 from common.run import Run
 
+kviq = "INSERT INTO miscmeta (key,value) VALUES (?,?)"
+
 class MetadataTracker() :
     def __init__(self, tslam, ia, ir) :
         self._sfree   = 0
@@ -154,6 +156,10 @@ if __name__ == "__main__" and __package__ is None:
               ", sftf INTEGER NOT NULL"           # Sum Free at Time of Free
               ", FOREIGN KEY(stkid) REFERENCES stacks(stkid)"
               ")")
+  con.execute("CREATE TABLE miscmeta "
+              "(key TEXT UNIQUE NOT NULL"
+              ", value NOT NULL"
+              ")")
 
   def istk(stk) :
     con.execute("INSERT OR IGNORE INTO stacks (stk) VALUES (?)", (stk,))
@@ -189,10 +195,14 @@ if __name__ == "__main__" and __package__ is None:
   run._trace_listeners += [ at ]
   run.replay()
 
-  # Mark in database as never freed.  Could also leave the _tslam adjustment
-  # out for a "free on exit" kind of thing.
+  con.execute(kviq, ("firsttime", run.timestamp_initial_ns))
+  con.execute(kviq, ("lasttime", run.timestamp_ns))
+
   at._tslam = lambda : None
   at.finish()
+
+  con.execute(kviq, ("nallocs", na))
+  con.execute(kviq, ("nreallocs", nr))
 
   con.commit()
   con.close()
