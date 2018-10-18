@@ -42,6 +42,20 @@ class Run:
     def duration_ms(self):
         return self.timestamp // 10**6
 
+    @property
+    def timestamp_initial_ns(self):
+        return self._ts_initial
+
+    def _replay_line(self, line) :
+      ts, rest = line.split('\t', maxsplit=1)
+      timestamp = int(ts)
+      self.timestamp = timestamp
+
+      fields = rest.split('\t')
+      if len(fields) == 2:
+          self._parse_addr_space_sample(fields)
+      else:
+          self._parse_trace(fields)
 
     def replay(self):
         for line in self._file:
@@ -49,20 +63,18 @@ class Run:
                 continue
 
             ts, rest = line.split('\t', maxsplit=1)
-            timestamp = int(ts)
-            if not self._ts_initial:
-                self._ts_initial = timestamp
-            self.timestamp = timestamp
+            self._ts_initial = int(ts)
+            self._replay_line(line)
+            break
 
-            fields = rest.count('\t') + 1
-            if fields == 2:
-                self._parse_addr_space_sample(rest)
-            else:
-                self._parse_trace(rest)
+        for line in self._file:
+            if line.startswith('#'):
+                continue
 
+            self._replay_line(line)
 
-    def _parse_trace(self, line):
-        callstack, call, arg, res = line.split('\t')
+    def _parse_trace(self, fields):
+        callstack, call, arg, res = fields
         arg = arg.split(' ')
 
         if call == 'malloc':
@@ -133,8 +145,8 @@ class Run:
         for tl in self._trace_listeners:
             getattr(tl, meth, _discard)(callstack, *args)
 
-    def _parse_addr_space_sample(self, line):
-        total_size, sweep_size = [int(s) for s in line.split('\t')]
+    def _parse_addr_space_sample(self, fields):
+        total_size, sweep_size = [int(s) for s in fields]
         for sl in self._addr_space_sample_listeners:
             sl.size_measured(total_size)
             sl.sweep_size_measured(sweep_size)
