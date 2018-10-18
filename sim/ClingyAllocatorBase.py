@@ -130,6 +130,9 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
                       choices=['always', 'yes', 'onlyshrink', 'never', 'no'])
     argp.add_argument('--paranoia', action='store', type=int, default=0)
     argp.add_argument('--revoke-k', action='store', type=int, default=1)
+    argp.add_argument('--render-style', action='store',
+                      type=str, default="compact",
+                      choices=['compact', 'expand16'])
 
   def _init_handle_args(self, args) :
     self._paranoia        = args.paranoia
@@ -149,6 +152,8 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
     else:
         self._try_realloc = self._try_realloc_yes
 
+    if args.render_style == "expand16":
+        self.render = self._render_expanded
 
 # --------------------------------------------------------------------- }}}
 
@@ -857,6 +862,65 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
     if oldestj is not None :
         (qbix, qsz, _) = self._bix2state.get(oldestj.value[0], coalesce_with_values=st_tj)
         renderSpansZ(img, zo, [(qbix - basebix, qsz, cOJS)])
+
+  def _render_expanded(self, img) :
+    from common.render import renderSpansZ
+    from PIL import ImageDraw
+
+    zo = img.width.bit_length() << 1
+    basebix = next(loc for (loc, _, _) in self._bix2state)
+
+    # bix and offset to pixel index
+    def expand(bix, off) :
+        return (bix * 2**self._bucklog + off + 15) >> 4
+
+    # render a bitmap bucket at block index offset (relative to basebix)
+    def rendszbm(bio, ap, sz, bm) :
+        ep = self._maxoix(sz)
+
+        if ap is None : ap = ep
+
+        for oix in range(0, ap) :
+            renderSpansZ(img, zo,
+              [(expand(bio, oix*sz), expand(0, sz*(oix+1)-1) - expand(0, sz*oix),
+                bst2color[BuckSt.JUNK] if bm & 1 == 1 else bst2color[BuckSt.WAIT])])
+            bm >>= 1
+
+        renderSpansZ(img, zo,
+            [(expand(bio, ap*sz), expand(0, sz*ep) - expand(0, sz*ap), bst2color[BuckSt.TIDY])])
+
+    # Paint most of the buckets; exclude AHWM since that's big
+    for (loc, sz, st) in self._bix2state:
+        # skip AHWM
+        if st == BuckSt.AHWM :
+            continue
+        # JUNK, and TIDY are entirely uniform
+        elif st == BuckSt.JUNK :
+            renderSpansZ(img, zo, [(expand(loc - basebix, 0), expand(sz, 0), bst2color[st])])
+        elif st == BuckSt.TIDY :
+            renderSpansZ(img, zo, [(expand(loc - basebix, 0), expand(sz, 0), bst2color[st])])
+        # BUMP states are backed at every bix with a bitmap
+        elif st == BuckSt.BUMP :
+            for bix in range(loc, loc+sz) :
+                (asz, bm) = self._bix2szbm[bix]
+                rendszbm(bix - basebix, self._szbix2ap[asz].get(bix, None), asz, bm)
+        # WAIT states are complicated: they are either backed with a bitmap
+        # or by a large value, indicating the uniform occupancy of one or
+        # more buckets.  We don't have better resolution than that, so just
+        # render those uniformly.
+        elif st == BuckSt.WAIT :
+            bix = loc
+            while bix < loc + sz :
+                (asz, bm) = self._bix2szbm[bix]
+                if self._issmall(asz) :
+                    # bitmap, one bucket
+                    rendszbm(bix - basebix, self._szbix2ap[asz].get(bix, None), asz, bm)
+                    bix += 1
+                else :
+                    # large object
+                    nsz = self._sz2nbucks(asz)
+                    renderSpansZ(img, zo, [(expand(bix - basebix, 0), expand(nsz, 0), bst2color[st])])
+                    bix += nsz
 
 # --------------------------------------------------------------------- }}}
 
