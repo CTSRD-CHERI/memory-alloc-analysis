@@ -126,8 +126,18 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
         overlaps_freed = [o for o in overlaps if o.state is AddrIvalState.FREED]
         overlaps_stubs = [o for o in self._realloc_stubs[begin:end] if o.state is AddrIvalState.FREED]
         if overlaps_allocd:
+            oa = overlaps_allocd
             logger.warning('%d\tW: New allocation %s overlaps existing allocations %s, chopping them out',
                  run.timestamp, interval, overlaps_allocd)
+            for o in oa:
+                self.__addr_ivals.remove(o)
+            if oa[0].contains_point(interval.begin):
+                left_stub = AddrIval(oa[0].begin, interval.begin, AddrIvalState.ALLOCD)
+                self.__addr_ivals.add(left_stub)
+            if oa[-1].contains_point(interval.end):
+                right_stub = AddrIval(interval.end, oa[-1].end, AddrIvalState.ALLOCD)
+                self.__addr_ivals.add(right_stub)
+
         if overlaps_stubs:
             err_fmt  = '%d\t%s: New allocation %s reuses old allocation stub from realloc '\
                        '(invalid revocation ahead)'
@@ -167,9 +177,8 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
         # made safe.
         interval_new = AddrIval(begin_new, end_new, AddrIvalState.ALLOCD)
         if interval_new.begin == interval_old.begin:
-            ival_old_removed = AddrIval(interval_old.begin, interval_old.end, None)
-            super()._update(ival_old_removed)
-            self.__addr_ivals.add(ival_old_removed)
+            super()._update(AddrIval(interval_old.begin, interval_old.end, None))
+            self.__addr_ivals.remove(interval_old)
             if interval_new.size < interval_old.size:
                 ival_old_stub = AddrIval(interval_new.end, interval_old.end, AddrIvalState.FREED)
                 self._realloc_stubs.add(ival_old_stub)
@@ -217,7 +226,7 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
             ival = AddrIval(begin, end, AddrIvalState.REVOKED)
             super()._update(ival)
             self.__addr_ivals.add(ival)
-            self._realloc_stubs.add(AddrIval(ival.begin, ival.end, None))
+            self._realloc_stubs.remove(ival)
 
 
     def addr_ivals(self, begin=None, end=None):
