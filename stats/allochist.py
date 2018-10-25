@@ -12,13 +12,22 @@ import sys
 
 metakq="""SELECT value FROM miscmeta WHERE key = ?"""
 
-def makeszf(minsz, maxsz) :
-    # def szf(sz) :
-    #     if sz is None : return szf(szlim)
-    #     if sz <= 16 : return sz
-    #     return int(math.log2(sz)*10) - (40-16)
+def makeszf(minsz, maxsz, flavor="compact") :
+    flavors = {}
 
-    def szf(sz) :
+    def clingy(sz) :
+        if   sz is None : return 25
+        elif sz <=   16 : return 0
+        elif sz <=   32 : return 1  + ((sz -  16) >> 2)
+        elif sz <=   64 : return 5  + ((sz -  32) >> 3)
+        elif sz <=  128 : return 9  + ((sz -  64) >> 4)
+        elif sz <=  256 : return 13 + ((sz - 128) >> 5)
+        elif sz <=  512 : return 17 + ((sz - 256) >> 6)
+        elif sz <= 1024 : return 21 + ((sz - 512) >> 7)
+        else            : return 25
+    flavors["clingy"] = clingy
+
+    def compact(sz) :
         if   sz is None : return 7
         elif sz <=   16 : return 0
         elif sz <=   32 : return 1
@@ -28,10 +37,17 @@ def makeszf(minsz, maxsz) :
         elif sz <=  512 : return 5
         elif sz <= 1024 : return 6
         else            : return 7
+    flavors["compact"] = compact
 
-    return szf
+    def lesscompact(sz) :
+        if sz is None : sz = maxsz - minsz
+        if sz <= 16 : return sz
+        return int(math.log2(sz)*10) - (40-16)
+    flavors["lesscompact"] = lesscompact
 
-def draw(output, ltlim, szf, q, et) :
+    return flavors[flavor]
+
+def draw(output, ltlim, szf, q, et, title=None) :
 
   def ltf(lt) :
       return int(math.log10(lt))
@@ -48,15 +64,18 @@ def draw(output, ltlim, szf, q, et) :
         fts = et
     d[ltf(fts-ats),szf(sz)] += 1
 
-  plt.figure(figsize=(szf(None)/5,10),dpi=100)
+  plt.figure(figsize=(szf(None),10),dpi=100)
   plt.imshow(d, norm=mplc.PowerNorm(0.3))
   plt.ylabel("Lifetime (log10 nsec)")
   plt.xlabel("Object size bin")
   plt.tight_layout()
+  if title is not None :
+    plt.title(title)
   if output is None:
       plt.show()
   else :
       plt.savefig(output,bbox_inches='tight')
+      plt.close()
 
 def etsetup(con):
   endtime   = con.execute(metakq, ("lasttime" ,)).fetchone()[0]
