@@ -271,9 +271,13 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
         # Exclude AHWM, which is like TIDY but would almost always be biggest
         (qbase, qsz, qv) = self._eva2sst.get(cursorloc,
                             coalesce_with_values=sst_tj)
-        assert qbase == cursorloc, "JUNK hunt index"
+        assert (qbase == cursorloc) or (qv not in sst_tj), \
+           ("JUNK hunt index", qbase, cursorloc, qv, qsz, list(self._eva2sst))
         # Advance cursor now so we can just continue in the below tests
-        cursorloc += qsz
+        # Note that this is not a straight sum because we could have
+        # coalesced backwards.  In that case, we are about to bounce out
+        # of this iteration with the qv sst_tj check.
+        cursorloc = qbase + qsz
 
         # Smaller or busy spans don't interest us
         if qsz <= bests[0][0] : continue
