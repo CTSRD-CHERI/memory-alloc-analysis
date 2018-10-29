@@ -27,6 +27,7 @@ import sys
 from common.intervalmap import IntervalMap
 from common.misc import Publisher, dll_im_coalesced_insert
 from sim.RenamingAllocatorBase import RenamingAllocatorBase
+from sim.SegFreeList import SegFreeList
 
 # Various symbolic names for paranoia levels
 PARANOIA_STATE_ON_REVOKE=0
@@ -110,10 +111,7 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
     '_nmapped' , # Number of bytes MAPD
     '_nwait'   , # Number of bytes WAIT (allocated)
     '_pagelog' , # Base-2 log of page size
-    '_tidylst' , # Free list of TIDY spans; (eva, sz)
-                 # sorted by LRU order
-    '_tidyadn' , # TIDY segment base EVA to node in tidylst;
-                 # sorted by address order
+    '_tidylst' , # SegFreeList of TIDY spans
     '_wildern'   # Wilderness location
   )
 
@@ -177,8 +175,7 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
     self._njunk    = 0
     self._nmapped  = 0
     self._nwait    = 0
-    self._tidylst  = dllist()
-    self._tidyadn  = SortedDict()
+    self._tidylst  = SegFreeList()
     self._wildern  = baseva
 
 # --------------------------------------------------------------------- }}}
@@ -231,20 +228,13 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
       assert jb == qb and jsz == qsz and qv == SegSt.JUNK, \
              ("JUNK list state mismatch", (jb, jsz), (qb, qsz, qv))
 
-    # All TIDY list entries are backed by TIDY segments
-    for (tb, tsz) in self._tidylst :
+    # All TIDY list entries are backed by TIDY segments, and the SegFL is OK
+    for (tb, tsz) in self._tidylst.iterlru() :
       (qb, qsz, qv) = self._eva2sst[tb]
       assert tb == qb and tsz == qsz and qv == SegSt.TIDY, \
              ("TIDY list state mismatch", (tb, tsz), (qb, qsz, qv))
-      assert tb in self._tidyadn, "TIDY node not in index"
-      assert (tb, tsz) == self._tidyadn[tb].value, "TIDY index botch"
 
-    for tb in self._tidyadn :
-      assert self._tidyadn[tb].value[0] == tb
-      tsz = self._tidyadn[tb].value[1]
-      (qb, qsz, qv) = self._eva2sst[tb]
-      assert tb == qb and tsz == qsz and qv == SegSt.TIDY, \
-             ("TIDY list state mismatch", (tb, tsz), qb, list(self._eva2sst))
+    self._tidylst.crossreference_asserts()
 
     # All WAIT spans are covered by allocations, all JUNK and TIDY spans
     # correspond with entries in their queues
@@ -259,9 +249,7 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
           assert asz is not None, ("WAIT w/o alloc sz", qb, ab)
           ab += asz
       elif qv == SegSt.TIDY :
-        dln = self._tidyadn.get(qb,None)
-        assert dln is not None
-        assert dln.value == (qb, qsz)
+        assert qsz == self._tidylst.peek(qb)
       elif qv == SegSt.JUNK :
         njunk += qsz
         dln = self._junkadn.get(qb,None)
@@ -290,7 +278,8 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
   # Inserts the coalesced span at the end of tidylst.
   def _mark_tidy(self, loc, sz):
       self._eva2sst.mark(loc, sz, SegSt.TIDY)
-      dll_im_coalesced_insert(loc,sz,self._eva2sst,self._tidylst,self._tidyadn)
+      (cva, csz, _) = self._eva2sst[loc]
+      self._tidylst.insert_coalesced(loc, sz, cva, csz)
 
   # An actual implementation would maintain a prioqueue or something;
   # we can get away with a linear scan.  We interrogate the segment state
@@ -399,8 +388,7 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
     # Note the requirement to either fit exactly or leave at least 16 bytes
     # free.
     try :
-      return next(loc for (loc,tsz) in self._tidylst
-                       if tsz == sz or tsz >= sz + 16)
+      return next(self._tidylst.iterfor(sz, 16))[0]
     except StopIteration :
       return self._wildern
 
@@ -429,8 +417,8 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
     # No need to use the coalescing insert functionality here because we
     # know, inductively, that we certainly won't coalesce in either direction.
     #
-    # XXX We leave the resulting span(s) in place in the TIDY list; is this
-    # the right policy?
+    # XXX We act as though any residual spans have been just created; is
+    # that the right policy?
     #
     # XXX Don't create segments less than the minimum allocation size, as
     # there's no possible utility to them and we'll catch them
@@ -440,17 +428,14 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
       (qb, qsz, qv) = self._eva2sst[reqbase]
       assert qv == SegSt.TIDY
       assert qsz >= reqsz
-      place = self._tidyadn[qb].next
-      (tb, tsz) = self._tidylst.remove(self._tidyadn.pop(qb))
-      assert tb == qb
+      tsz = self._tidylst.remove(qb)
       assert tsz == qsz
       if qb + qsz != reqbase + reqsz :
         # Insert residual right span
-        self._tidyadn[reqbase+reqsz] = self._tidylst.insert(\
-          (reqbase+reqsz, qb+qsz-reqbase-reqsz), place)
+        self._tidylst.insert(reqbase+reqsz, qb+qsz-reqbase-reqsz)
       if reqbase != qb :
         # Insert residual left span
-        self._tidyadn[qb] = self._tidylst.insert((qb, reqbase-qb), place)
+        self._tidylst.insert(qb, reqbase-qb)
 
     # If the allocation takes place within the current best revokable span,
     # invalidate the cache and let the revocation heuristic reconstruct it.
@@ -572,9 +557,9 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
         renderSpansZ(img, zo, [(qb >> self._alignlog, qsz >> self._alignlog, 0xFF00FF)])
 
     # Paint over the oldest TIDY span
-    oldestt = self._tidylst.first
+    oldestt = self._tidylst.eldest()
     if oldestt is not None :
-        (qb, qsz) = oldestt.value
+        (qb, qsz) = oldestt
         qb -= baseva
         renderSpansZ(img, zo, [(qb >> self._alignlog, qsz >> self._alignlog, 0x00FFFF)])
 
