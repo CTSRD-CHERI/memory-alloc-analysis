@@ -27,16 +27,18 @@
 # OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 # SUCH DAMAGE.
 
-from collections import namedtuple
-import sys
-import numpy
-import logging
 import argparse
-import re
+import ast
+from collections import namedtuple
 import itertools
+import logging
+import math
+import numpy
+import re
+import sys
+import os
 
 if __name__ == "__main__" and __package__ is None:
-    import os
     sys.path.append(os.path.dirname(sys.path[0]))
 
 from common.intervalmap import IntervalMap
@@ -391,11 +393,6 @@ class CompactingSweepingRevoker(BaseSweepingRevoker):
 
 
 class BaseOutput:
-    def __init__(self, file):
-        if isinstance(file, str):
-            file = open(file, 'w')
-        self._file = file
-
     def rate_limited_runms(call_period_ms):
         def _rate_limited_ms(meth):
             call_last_ms = 0
@@ -407,8 +404,30 @@ class BaseOutput:
             return rate_limited_meth
         return _rate_limited_ms
 
+    def rate_limited_run_alloc_api_calls(call_period_alloc_api_calls):
+        def _rate_limited_run_alloc_api_calls(meth):
+            call_last = 0
+            def rate_limited_meth(*args):
+                nonlocal call_last
+                if call_last == 0 or run.alloc_api_calls - call_last > call_period_alloc_api_calls:
+                    meth(*args)
+                    call_last = run.alloc_api_calls
+            return rate_limited_meth
+        return _rate_limited_run_alloc_api_calls
+
+
     def update(self):
         raise NotImplementedError
+
+    def end(self):
+        raise NotImplementedError
+
+
+class FileOutput(BaseOutput):
+    def __init__(self, file):
+        if isinstance(file, str):
+            file = open(file, 'w')
+        self._file = file
 
     def end(self):
         self._file.close()
@@ -416,7 +435,7 @@ class BaseOutput:
 
 class CompositeOutput(BaseOutput):
     def __init__(self, *outputs):
-        super().__init__(None)
+        super().__init__()
         self._outputs = outputs
 
     def update(self):
@@ -428,7 +447,7 @@ class CompositeOutput(BaseOutput):
             o.end()
 
 
-class GraphOutput(BaseOutput):
+class GraphOutput(FileOutput):
     def __init__(self, file):
         super().__init__(file)
         self._output_header()
@@ -445,7 +464,7 @@ class GraphOutput(BaseOutput):
               revoker.swept, revoker.swept_ivals), file=self._file)
 
 
-class AllocationMapOutput(BaseOutput, AllocatedAddrSpaceModelSubscriber):
+class AllocationMapOutput(FileOutput, AllocatedAddrSpaceModelSubscriber):
     POOL_MAX_ARTIFICIAL_GROWTH = 0x1000
 
     POOL_MAP_RESOLUTION_IN_SYMBOLS = 60
@@ -520,7 +539,7 @@ class AllocationMapOutput(BaseOutput, AllocatedAddrSpaceModelSubscriber):
         return chunk_stat
 
 
-class SweepEventsOutput(BaseOutput):
+class SweepEventsOutput(FileOutput):
     def __init__(self, file):
         super().__init__(file)
         self._alloc_api_calls = 0
@@ -540,13 +559,82 @@ class SweepEventsOutput(BaseOutput):
             self._revoker_state_last = revoker.swept
 
 
+class DirectoryOutput(BaseOutput):
+    def __init__(self, dir):
+        try:
+            os.makedirs(dir, mode=0o700)
+        except OSError:
+            pass
+        self._dir = dir
+
+    def end(self): pass
+
+
+class RenderedAllocationMapOutput(DirectoryOutput):
+    st2color = {
+      AddrIvalState.ALLOCD  : 0x00FF00,
+      AddrIvalState.FREED   : 0xFF0000,
+      AddrIvalState.REVOKED : 0xFFFFFF,
+    }
+
+    def __init__(self, dir, period, geom):
+        super().__init__(dir)
+        self.update = BaseOutput.rate_limited_run_alloc_api_calls(period)(self.update)
+        self._geom = geom
+
+    def update(self):
+        addr_ivals = alloc_state.addr_ivals()
+        if not addr_ivals:
+            return
+
+        now = run.timestamp_ns
+        img = Image.new('RGB', self._geom)
+
+        # Use the first address being tracked
+        baseva = addr_ivals[0].begin
+
+        # Just how big is this image, anyway?
+        # Assume 16-byte alignment, so one pixel per 16 bytes.
+        topva = baseva + img.width * img.height * 16
+
+        # Extract Z order from image width
+        zo = img.width.bit_length() << 1
+
+        renderSpansZ(img, zo,
+          (((i.begin - baseva) >> 4, (i.end - i.begin) >> 4, self.st2color[i.value])
+            for i in addr_ivals))
+
+        img.save("%s/%s.png" % (self._dir, now))
+
+
+class FreedAddrIvalsHistogramOutput(DirectoryOutput):
+    def __init__(self, dir, period):
+        super().__init__(dir)
+        self.update = BaseOutput.rate_limited_run_alloc_api_calls(period)(self.update)
+
+    def update(self) :
+        freeszs = [i.size for i in alloc_state.addr_ivals() if i.value == AddrIvalState.FREED]
+        if not freeszs:
+          return
+
+        now = run.timestamp_ns
+
+        bins = 2**(numpy.arange(math.floor(math.log2(min(freeszs))),math.ceil(math.log2(max(freeszs))),0.25))
+        plt.hist(freeszs,bins=bins,log=True)
+        plt.xlabel("Span size (log2 bytes)")
+        plt.xscale('log')
+        plt.ylabel("Count")
+        plt.title("FREED span histogram at time %d" % now)
+        plt.grid(True)
+        plt.savefig("%s/%d.png" % (self._dir,now),bbox_inches='tight')
+        plt.close()
+
+
 # Parse command line arguments
 argp = argparse.ArgumentParser(description='Model allocation from a trace and output various measurements')
 argp.add_argument("--log-level", help="Set the logging level.  Defaults to CRITICAL",
                   choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
                   default="ERROR")
-argp.add_argument("--allocation-map-output", help="Output file for the allocation map (disabled by default)")
-argp.add_argument("--sweep-events-output", help="Output file for the sweep-triggering events (disabled by default)")
 argp.add_argument('revoker', nargs='?', default='CompactingSweepingRevoker',
                   help="Select the revoker type, or 'account' to assume error-free trace and speed up the"
                   " stats gathering.  Revoker types: NaiveSweepingRevokerN, CompactingSweepingRevokerN,"
@@ -557,6 +645,21 @@ argp.add_argument("--exit-on-reuse", action="store_true", help="Stop processing 
 argp.add_argument("--exit-on-unsafe", action="store_true", help="Stop processing and exit with non-zero code "
                   "if the trace contains unsafe allocation behaviour, such as reuse of old allocation stub "
                   "from a shrinking realloc.")
+
+argp.add_argument("--allocation-map-output", help="Output file for the allocation map (disabled by default)")
+argp.add_argument("--sweep-events-output", help="Output file for the sweep-triggering events (disabled by default)")
+argp.add_argument("--rendered-allocation-map-output", type=str, help="Output directory for rendered "
+                  "allocation maps (disabled by default)")
+argp.add_argument('--rendered-allocation-map-geometry', type=ast.literal_eval, default=(1024,1024))
+argp.add_argument('--rendered-allocation-map-period', type=int, default=10 * 10**6, help="Period in allocator "
+                  "API calls between renderings of the allocation map output (enabled through "
+                  "--rendered-allocation-map-output); defaults to 10M")
+argp.add_argument('--freed-addr-ivals-histogram-output', type=str, help="Output directory for freed spans "
+                  "histogram output (disabled by default)")
+argp.add_argument('--freed-addr-ivals-histogram-period', type=int, default=1 * 10**6, help="Period in allocator "
+                  "API calls between renderings of the freed spans histograms output (enabled through "
+                  "freed-addr-ivals-histogram-output); defaults to 1M")
+
 args = argp.parse_args()
 
 # Set up logging
@@ -591,6 +694,19 @@ if args.allocation_map_output:
 if args.sweep_events_output:
     sweep_events_output = SweepEventsOutput(args.sweep_events_output)
     output = CompositeOutput(output, sweep_events_output)
+if args.rendered_allocation_map_output:
+    from PIL import Image
+    from PIL import ImageDraw
+    from common.render import renderSpansZ
+    rendered_alloc_map_output = RenderedAllocationMapOutput(args.rendered_allocation_map_output,
+                                                            args.rendered_allocation_map_period,
+                                                            args.rendered_allocation_map_geometry)
+    output = CompositeOutput(output, rendered_alloc_map_output)
+if args.freed_addr_ivals_histogram_output:
+    import matplotlib.pyplot as plt
+    freed_spans_hist_output = FreedAddrIvalsHistogramOutput(args.freed_addr_ivals_histogram_output,
+                                                            args.freed_addr_ivals_histogram_period)
+    output = CompositeOutput(output, freed_spans_hist_output)
 
 run.replay()
 output.update()  # ensure at least one output update
