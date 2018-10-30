@@ -295,7 +295,7 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
 
         bests = bests[(-n):]
 
-    return bests
+    return [best for best in bests if best[1] >= 0]
 
   def _do_revoke(self, ss) :
    if self._paranoia > PARANOIA_STATE_ON_REVOKE : self._state_asserts()
