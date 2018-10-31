@@ -337,7 +337,7 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
         self._junklru.remove(self._junkadn.pop(qb))
         self._mark_tidy(qb, qsz)
 
-   self._publish('revoked', "---", [(loc, loc+sz) for (_, loc, sz) in ss])
+   self._publish('revoked', "---", "", [(loc, loc+sz) for (_, loc, sz) in ss])
 
   def _do_revoke_best_and(self, n=None, revoke=[]) :
 
@@ -392,14 +392,14 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
     except StopIteration :
       return self._wildern
 
-  def _ensure_mapped(self, stk, reqbase, reqsz) :
+  def _ensure_mapped(self, stk, tid, reqbase, reqsz) :
     pbase = self._eva2evp(reqbase)
     plim  = self._eva2evp(reqbase + reqsz - 1)
     for (qb, qsz, qv) in self._evp2pst[pbase:plim] :
       if qv == PageSt.MAPD : continue
       if qb + qsz > plim : qsz = plim - qb
       self._nmapped += self._npg2nby(qsz)
-      self._publish('mapd', stk, self._evp2eva(qb), self._evp2eva(qb + qsz), 0b11)
+      self._publish('mapd', stk, tid, self._evp2eva(qb), self._evp2eva(qb + qsz), 0b11)
     self._evp2pst.mark(pbase, plim-pbase+1, PageSt.MAPD)
 
   def _mark_allocated(self, reqbase, reqsz) :
@@ -448,7 +448,7 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
     self._wildern = max(self._wildern, reqbase + reqsz)
     self._eva2sst.mark(reqbase, reqsz, SegSt.WAIT)
 
-  def _alloc(self, stk, sz) :
+  def _alloc(self, stk, tid, sz) :
     if self._paranoia > PARANOIA_STATE_PER_OPER : self._state_asserts()
 
     if sz < self._minsize : sz = self._minsize   # minimum size
@@ -456,7 +456,7 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
 
     loc = self._alloc_place(stk, sz)
 
-    self._ensure_mapped(stk,loc,sz)
+    self._ensure_mapped(stk,tid,loc,sz)
     self._mark_allocated(loc,sz)
     self._eva2sz[loc] = sz
     return loc
@@ -464,7 +464,7 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
 # --------------------------------------------------------------------- }}}
 # Free ---------------------------------------------------------------- {{{
 
-  def _ensure_unmapped(self, stk, loc, sz):
+  def _ensure_unmapped(self, stk, tid, loc, sz):
     pbase = self._eva2evp_roundup(loc)
     plim  = self._eva2evp(loc + sz - 1)
     if pbase == plim : return # might not be an entire page
@@ -472,7 +472,7 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
     for (qb, qsz, qv) in self._evp2pst[pbase:plim] :
       if qv == PageSt.UMAP : continue
       self._nmapped -= self._npg2nby(qsz)
-      self._publish('unmapd', stk, self._evp2eva(qb), self._evp2eva(qb + qsz))
+      self._publish('unmapd', stk, tid, self._evp2eva(qb), self._evp2eva(qb + qsz))
     self._evp2pst.mark(pbase, plim-pbase, PageSt.UMAP)
 
 
@@ -524,7 +524,7 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
 # --------------------------------------------------------------------- }}}
 # Realloc ------------------------------------------------------------- {{{
 
-  def _try_realloc(self, stk, oeva, nsz):
+  def _try_realloc(self, stk, tid, oeva, nsz):
     # XXX
     return False
 

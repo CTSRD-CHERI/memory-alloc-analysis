@@ -61,14 +61,14 @@ class Allocator(TraditionalAllocatorBase):
 
   # This is kind of gross; we reach all the way back into
   # RenamingAllocatorBase to handle this one ourselves.
-  def reallocd(self, stk, otva, ntva, etva) :
+  def reallocd(self, stk, tid, otva, ntva, etva) :
     oeva = self._tva2eva.get(otva, None)
     if oeva is None :
         if __debug__ : logging.debug("=reallocd is alloc at ts=%d", self._tslam())
-        self.allocd(stk, ntva, etva)
+        self.allocd(stk, tid, ntva, etva)
     elif etva == ntva :
         if __debug__ : logging.debug("=reallocd is free at ts=%d", self._tslam())
-        self.freed(stk, otva)
+        self.freed(stk, tid, otva)
     else :
         sz = etva - ntva
         oid = self._eva2oid[oeva]
@@ -88,11 +88,11 @@ class Allocator(TraditionalAllocatorBase):
         pos = row[2] + self._evp2eva(self._basepg)
         
         self._mark_allocated(pos, sz)
-        self._ensure_mapped(stk, pos, sz)
+        self._ensure_mapped(stk, tid, pos, sz)
         self._eva2sz[pos] = sz
         self._tva2eva[ntva] = pos
         self._eva2oid[pos] = oid
 
         self._free(stk, oeva)
 
-        self._publish('reallocd', stk, oeva, pos, pos+sz)
+        self._publish('reallocd', stk, tid, oeva, pos, pos+sz)

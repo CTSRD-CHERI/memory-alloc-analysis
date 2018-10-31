@@ -121,7 +121,7 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
         return self._total
 
 
-    def allocd(self, stk, begin, end):
+    def allocd(self, stk, tid, begin, end):
         interval = AddrIval(begin, end, AddrIvalState.ALLOCD)
         overlaps = self.addr_ivals(begin, end)
         overlaps_allocd = [o for o in overlaps if o.state is AddrIvalState.ALLOCD]
@@ -155,12 +155,12 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
                 logger.critical("%d\tCrit: New allocation %s re-uses %s, exiting as instructed "
                              "by --exit-on-reuse", run.timestamp, interval, overlaps_freed)
                 sys.exit(1)
-            self._publish('reused', stk, begin, end)
+            self._publish('reused', stk, tid, begin, end)
         super()._update(interval)
         self.__addr_ivals.add(interval)
 
 
-    def reallocd(self, stk, begin_old, begin_new, end_new):
+    def reallocd(self, stk, tid, begin_old, begin_new, end_new):
         interval_old = self.addr_ival(begin_old)
         if not interval_old:
             logger.warning('%d\tW: No existing allocation to realloc at %x, doing just alloc',
@@ -191,7 +191,7 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
         self.allocd(stk, begin_new, end_new)
 
 
-    def freed(self, stk, begin):
+    def freed(self, stk, tid, begin):
         interval = self.addr_ival(begin)
         if interval:
             if begin != interval.begin or interval.state is not AddrIvalState.ALLOCD:
@@ -205,7 +205,7 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
         self.__addr_ivals.add(interval)
 
 
-    def revoked(self, stk, *bes):
+    def revoked(self, stk, tid, *bes):
         if not isinstance(bes[0], tuple):
             bes = [(bes[0], bes[1])]
         query_and_overlaps = [((b, e), self.addr_ivals(b, e)) for b, e in bes]
@@ -247,10 +247,10 @@ class MappedAddrSpaceModel(BaseIntervalAddrSpaceModel):
     def mapd_size(self):
         return self._total
 
-    def mapd(self, _, begin, end, __):
+    def mapd(self, _, _, begin, end, __):
         self._update(AddrIval(begin, end, AddrIvalState.MAPD))
 
-    def unmapd(self, _, begin, end):
+    def unmapd(self, _, _, begin, end):
         self._update(AddrIval(begin, end, AddrIvalState.UNMAPD))
 
 
@@ -261,7 +261,7 @@ class AllocatorMappedAddrSpaceModel(MappedAddrSpaceModel):
     def call_is_from_allocator(callstack):
        return any(callstack.find(frame) >= 0 for frame in ('malloc', 'calloc', 'realloc', 'free'))
 
-    def mapd(self, callstack, begin, end, prot):
+    def mapd(self, callstack, tid, begin, end, prot):
         if prot == 0b11 and AMAS.call_is_from_allocator(callstack):
             self._update(AddrIval(begin, end, AddrIvalState.MAPD))
 
@@ -276,27 +276,27 @@ class AccountingAllocatedAddrSpaceModel(BaseAddrSpaceModel):
         self.allocd_size = 0
         self.mapd_size = 0
 
-    def mapd(self, callstack, begin, end, prot):
+    def mapd(self, callstack, tid, begin, end, prot):
         if prot == 0b11 and AMAS.call_is_from_allocator(callstack):
             self.mapd_size += end - begin
         output.update()
-    def unmapd(self, callstack, begin, end):
+    def unmapd(self, callstack, tid, begin, end):
         if AMAS.call_is_from_allocator(callstack):
             self.mapd_size -= end - begin
 
-    def allocd(self, stk, begin, end):
+    def allocd(self, stk, tid, begin, end):
         sz = end - begin
         self._va2sz[begin] = sz
         self.allocd_size += sz
         output.update()
-    def freed(self, stk, begin):
+    def freed(self, stk, tid, begin):
         sz = self._va2sz.get(begin)
         if sz is not None :
             self.allocd_size -= sz
             del self._va2sz[begin]
-    def reallocd(self, stk, obegin, nbegin, nend):
-        self.freed(stk, obegin)
-        self.allocd(stk, nbegin, nend)
+    def reallocd(self, stk, tid, obegin, nbegin, nend):
+        self.freed(stk, tid, obegin)
+        self.allocd(stk, tid, nbegin, nend)
 
 class AllocatedAddrSpaceModelSubscriber:
     def reused(self, alloc_state, stk, begin, end):
@@ -320,7 +320,7 @@ class BaseSweepingRevoker(AllocatedAddrSpaceModelSubscriber):
         return self.swept // 2**30
 
 
-    def revoked(self, stk, *bes):
+    def revoked(self, stk, tid, *bes):
         self._sweep(addr_space.sweep_size, [AddrIval(b, e, AddrIvalState.FREED) for b, e in bes])
 
 
@@ -338,16 +338,16 @@ class BaseSweepingRevoker(AllocatedAddrSpaceModelSubscriber):
 
 
 class SimpleSweepingRevoker(BaseSweepingRevoker):
-    def reused(self, alloc_state, stk, begin, end):
+    def reused(self, alloc_state, stk, tid, begin, end):
         intervals = [i for i in alloc_state.addr_ivals(begin, end) if i.state is AddrIvalState.FREED]
         if intervals:
             self._sweep(addr_space.sweep_size, intervals)
         for ival in intervals:
-            alloc_state.revoked(stk, ival.begin, ival.end)
+            alloc_state.revoked(stk, tid, ival.begin, ival.end)
 
 
 class CompactingSweepingRevoker(BaseSweepingRevoker):
-    def reused(self, alloc_state, stk, begin, end):
+    def reused(self, alloc_state, stk, tid, begin, end):
         overlaps = [i for i in alloc_state.addr_ivals(begin, end) if i.state is AddrIvalState.FREED]
         olaps_coalesced = self._coalesce_freed_and_revoked(overlaps)
 
@@ -372,7 +372,7 @@ class CompactingSweepingRevoker(BaseSweepingRevoker):
                 addr_fwd = max(addr_fwd + 0x1000, olaps_coalesced[-1].end)
             self._sweep(addr_space.sweep_size, olaps_coalesced)
         for ival in olaps_coalesced:
-            alloc_state.revoked(stk, ival.begin, ival.end)
+            alloc_state.revoked(stk, tid, ival.begin, ival.end)
 
 
     @staticmethod
@@ -476,7 +476,7 @@ class AllocationMapOutput(FileOutput, AllocatedAddrSpaceModelSubscriber):
         alloc_state.register_subscriber(self)
 
 
-    def reused(self, alloc_state, stk, begin, end):
+    def reused(self, alloc_state, stk, tid, begin, end):
         self._addr_ivals_reused.add(AddrIval(begin, end, None))
 
 

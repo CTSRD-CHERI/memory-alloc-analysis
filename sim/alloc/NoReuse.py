@@ -36,5 +36,5 @@ class Allocator (RenamingAllocatorBase):
     self._state.mark(eva, self._eva2sz[eva], False)
     del self._eva2sz[eva]
 
-  def _try_realloc(self, stk, oeva, nsz):
+  def _try_realloc(self, stk, tid, oeva, nsz):
     return False

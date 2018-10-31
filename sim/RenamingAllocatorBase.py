@@ -30,32 +30,32 @@ class RenamingAllocatorBase (Publisher):
     self._tva2eva = {}
 
   # Alloc then publish, which is the natural order of effects
-  def allocd(self, stk, begin, end):
+  def allocd(self, stk, tid, begin, end):
     # if begin == 0 : return  # Don't translate failing applications
 
     stk_delegate = stk if stk else 'malloc'
     sz = end - begin
     eva = self._alloc(stk_delegate, sz)
     self._tva2eva[begin] = eva
-    self._publish('allocd', stk, eva, eva+sz)
+    self._publish('allocd', stk, tid, eva, eva+sz)
 
   # Publish then free, so that effects (e.g. unmap) occur in the right order!
-  def freed(self, stk, begin):
+  def freed(self, stk, tid, begin):
     stk_delegate = stk if stk else 'free'
     eva = self._tva2eva.get(begin, None)
     if eva is not None :
-      self._publish('freed', stk, eva)
+      self._publish('freed', stk, tid, eva)
       self._free(stk_delegate, eva)
       del self._tva2eva[begin]
 
-  def reallocd(self, stk, begin_old, begin_new, end_new):
+  def reallocd(self, stk, tid, begin_old, begin_new, end_new):
     stk_delegate = stk if stk else 'realloc'
     szn = end_new - begin_new
     evao = self._tva2eva.get(begin_old, None)
     if evao is not None :
 
-      if self._try_realloc(stk_delegate, evao, szn) : 
-        return self._publish('reallocd', stk, evao, evao, evao+szn)
+      if self._try_realloc(stk_delegate, tid, evao, szn) : 
+        return self._publish('reallocd', stk, tid, evao, evao, evao+szn)
 
       # otherwise, alloc new thing, free old thing
       evan = self._alloc(stk_delegate, szn)
@@ -65,11 +65,11 @@ class RenamingAllocatorBase (Publisher):
       del self._tva2eva[begin_old]
       self._tva2eva[begin_new] = evan
 
-      self._publish('reallocd', stk, evao, evan, evan+szn)
+      self._publish('reallocd', stk, tid, evao, evan, evan+szn)
     else :
       # We don't seem to have that address on file; allocate it
       # (This should include NULL, yeah?)
-      self.allocd(stk, begin_new, end_new)
+      self.allocd(stk, tid, begin_new, end_new)
 
   # Pass through
   def size_measured(self, sz):
@@ -84,11 +84,11 @@ class RenamingAllocatorBase (Publisher):
   # order, we are only out to model allocator placements, and can
   # synthesize our own map and unmap events, don't pass these further
   # along the pipeline.
-  def mapd(self, stk, begin, end, prot):
+  def mapd(self, stk, tid, begin, end, prot):
     pass
 
-  def unmapd(self, stk, begin, end):
+  def unmapd(self, stk, tid, begin, end):
     pass
 
-  def revoked(self, stk, spans):
+  def revoked(self, stk, tid, spans):
     pass

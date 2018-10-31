@@ -74,7 +74,12 @@ class Run:
             self._replay_line(line)
 
     def _parse_trace(self, fields):
-        callstack, call, arg, res = fields
+        # XXX Remove conditional once more of the traces have TIDs
+        if len(fields) == 5:
+            callstack, tid, call, arg, res = fields
+        else:
+            tid = ''
+            callstack, call, arg, res = fields
         arg = arg.split(' ')
 
         if call == 'malloc':
@@ -143,7 +148,7 @@ class Run:
             raise ValueError('unknown call trace "{0}"'.format(call))
 
         for tl in self._trace_listeners:
-            getattr(tl, meth, _discard)(callstack, *args)
+            getattr(tl, meth, _discard)(callstack, tid, *args)
 
     def _parse_addr_space_sample(self, fields):
         total_size, sweep_size = [int(s) for s in fields]
@@ -161,25 +166,26 @@ class Unrun:
         self._out = out
         self._last_measured_size = None
 
-    def allocd(self, publ, stk, begin, end):
+    def allocd(self, publ, stk, tid, begin, end):
         # XXX we lose information about precisely which allocator call it was
         # (i.e. malloc vs. calloc vs. aligned_alloc vs. posix_memalign ....)
         print("%d\t%s\tmalloc\t%d\t%x" % (self._tslam(), stk, end - begin, begin), file=self._out)
 
-    def freed(self, publ, stk, begin):
-        print("%d\t\tfree\t%x\t" % (self._tslam(), begin), file=self._out)
+    def freed(self, publ, stk, tid, begin):
+        print("%d\t%s\t%s\tfree\t%x\t" % (self._tslam(), stk, tid, begin), file=self._out)
 
-    def reallocd(self, publ, stk, begin_old, begin_new, end_new):
-        print("%d\t%s\trealloc\t%x %d\t%x" % (self._tslam(), stk, begin_old, end_new - begin_new, begin_new), file=self._out)
+    def reallocd(self, publ, stk, tid, begin_old, begin_new, end_new):
+        print("%d\t%s\t%s\trealloc\t%x %d\t%x" % (self._tslam(), stk, tid,
+              begin_old, end_new - begin_new, begin_new), file=self._out)
 
-    def mapd(self, publ, stk, begin, end, prot):
-        print("%d\t%s\tmmap\t0 %d %d\t%x" % (self._tslam(), stk, end - begin, prot, begin))
+    def mapd(self, publ, stk, tid, begin, end, prot):
+        print("%d\t%s\t%s\tmmap\t0 %d %d\t%x" % (self._tslam(), stk, tid, end - begin, prot, begin))
 
-    def unmapd(self, publ, stk, begin, end):
-        print("%d\t%s\tmunmap\t%x %d\t" % (self._tslam(), stk, begin, end - begin))
+    def unmapd(self, publ, stk, tid, begin, end):
+        print("%d\t%s\t%s\tmunmap\t%x %d\t" % (self._tslam(), stk, tid, begin, end - begin))
 
-    def revoked(self, publ, stk, spans):
-        print("%d\t\trevoke\t%s\t" % (self._tslam(),
+    def revoked(self, publ, stk, tid, spans):
+        print("%d\t%s\t%s\trevoke\t%s\t" % (self._tslam(), stk, tid,
             " ".join(["%x %x" % be for be in spans])))
 
     # These are packed onto one line, so cache them in the order generated
