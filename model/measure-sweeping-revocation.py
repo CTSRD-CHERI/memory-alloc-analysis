@@ -528,13 +528,6 @@ class SweepEventsOutput(BaseOutput):
         self._output_header()
         run.register_trace_listener(self)
 
-    def allocd(self, *args):
-        self._alloc_api_calls += 1
-    def reallocd(self, *args):
-        self._alloc_api_calls += 1
-    def freed(self, *args):
-        self._alloc_api_calls += 1
-
     def _output_header(self):
         print('#{0}\t{1}'.format('eventstamp-alloc-api-calls-malloc-calloc-aligned_alloc-posix_memalign-realloc-free',
               'sweep-amount-b'), file=self._file)
@@ -542,7 +535,7 @@ class SweepEventsOutput(BaseOutput):
     def update(self):
         if self._revoker_state_last != revoker.swept:
             sweep = revoker.swept - self._revoker_state_last
-            print('{0}\t{1}'.format(self._alloc_api_calls, sweep), file=self._file)
+            print('{0}\t{1}'.format(run.alloc_api_calls, sweep), file=self._file)
             self._revoker_state_last = revoker.swept
 
 
@@ -596,7 +589,6 @@ if args.allocation_map_output:
     output = CompositeOutput(output, alloc_map_output)
 if args.sweep_events_output:
     sweep_events_output = SweepEventsOutput(args.sweep_events_output)
-    run.register_trace_listener(sweep_events_output)
     output = CompositeOutput(output, sweep_events_output)
 
 run.replay()

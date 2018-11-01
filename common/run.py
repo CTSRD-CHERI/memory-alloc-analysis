@@ -8,6 +8,7 @@ def _discard(*args, **kwargs): pass
 class Run:
     def __init__(self, file, *, trace_listeners=[], addr_space_sample_listeners=[]):
         self.timestamp = 0
+        self.alloc_api_calls = 0
         self._ts_initial = 0
         self._file = file
         self._trace_listeners = list(set(trace_listeners))
@@ -101,6 +102,7 @@ class Run:
         if call in ('malloc', 'calloc', 'aligned_alloc', 'posix_memalign'):
             meth = 'allocd'
             args = (begin, end)
+            self.alloc_api_calls += 1
         elif call in ('realloc', ):
             if begin_old == 0:
                 meth = 'allocd'
@@ -111,9 +113,11 @@ class Run:
             else:
                 meth = 'reallocd'
                 args = (begin_old, begin_new, end_new)
+            self.alloc_api_calls += 1
         elif call in ('free', ):
             meth = 'freed'
             args = (begin, )
+            self.alloc_api_calls += 1
         elif call in ('mmap', ):
             meth = 'mapd'
             args = (begin, end, prot)
