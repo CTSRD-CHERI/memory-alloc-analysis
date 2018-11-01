@@ -666,6 +666,18 @@ args = argp.parse_args()
 logging.basicConfig(level=logging.getLevelName(args.log_level), format="%(message)s")
 logger = logging.getLogger()
 
+# Check command-line arguments
+if args.revoker == "account":
+    if args.sweep_events_output:
+        logger.critical('Crit: Sweep events cannot be output in accounting mode')
+        sys.exit(1)
+    if args.allocation_map_output or args.rendered_allocation_map_output:
+        logger.critical('Crit: Allocation map cannot be output in accounting mode')
+        sys.exit(1)
+    if args.freed_addr_ivals_histogram_output:
+        logger.critical('Crit: FREED intervals histogram cannot be output in accounting mode')
+        sys.exit(1)
+
 # Set up the model
 if args.revoker == "account":
     alloc_state = AccountingAllocatedAddrSpaceModel()
