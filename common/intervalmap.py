@@ -96,34 +96,54 @@ class IntervalMap:
 
 
     @should_return_ivals
-    def get(self, loc, **kwds):
+    def get(self, loc, *, coalesce_with_values=set(), coalesce_with_self_and_values=set(),
+                          coalesce_beyond_values=set(), coalesce_beyond_self_and_values=set()):
         base, sz, v = self.__getitem__.raw(self, loc)
-        values_coalesced = kwds.get('coalesce_with_values', set())
-        coalesce_with_self_and_values = kwds.get('coalesce_with_self_and_values', set())
+        values_coalesced = set(coalesce_with_values)
         if coalesce_with_self_and_values:
-            values_coalesced.update(coalesce_with_self_and_values.union({v}))
+            values_coalesced.update((v,))
+            values_coalesced.update(coalesce_with_self_and_values)
         if not values_coalesced:
             return (base, sz, v)
 
+        values_allowed = set(coalesce_beyond_values)
+        if coalesce_beyond_self_and_values:
+            values_allowed.update((v,))
+            values_allowed.update(coalesce_beyond_self_and_values)
+        values_allowed.difference_update(values_coalesced)
+
+        backup = (base, sz, v)
         basel, _, vl = (base, sz, v)
         baser, szr, vr = (base, sz, v)
         #print('base={0:x} sz={1:x} v={2} values_coalesced={3}'.format(base, sz, v, values_coalesced), file=sys.stderr)
         try:
             basel, _, vl = self.__getitem__.raw(self, basel - 1)
-            while vl in values_coalesced:
+            while vl in values_coalesced or vl in values_allowed:
                 base, sz = basel, base + sz - basel
+                if vl in values_coalesced:
+                    backup = (base, sz, v)
                 basel, _, vl = self.__getitem__.raw(self, basel - 1)
                 #print('basel={0:x} sz= vl={1}'.format(basel, vl), file=sys.stderr)
         except ValueError:
             pass
+        _, _, _v = self.__getitem__.raw(self, base)
+        if _v not in values_coalesced and _v in values_allowed:
+            base, sz, v = backup
+
+        backup = (base, sz, v)
         try:
             baser, szr, vr = self.__getitem__.raw(self, baser + szr)
-            while vr in values_coalesced:
+            while vr in values_coalesced or vr in values_allowed:
                 sz = baser + szr - base
+                if vr in values_coalesced:
+                    backup = (base, sz, v)
                 baser, szr, vr = self.__getitem__.raw(self, baser + szr)
                 #print('baser={0:x} baser+szr={1:x} vr={2}'.format(baser, baser + szr, vr), file=sys.stderr)
         except ValueError:
             pass
+        _, _, _v = self.__getitem__.raw(self, base + sz - 1)
+        if _v not in values_coalesced and _v in values_allowed:
+            base, sz, v = backup
 
         return (base, sz, v)
 
