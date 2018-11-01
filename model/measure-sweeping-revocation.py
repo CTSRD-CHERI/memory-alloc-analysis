@@ -380,7 +380,8 @@ class CompactingSweepingRevoker(BaseSweepingRevoker):
 
         while ivals:
             ival = alloc_state.addr_ival_coalesced(ivals.pop().begin,
-                                                   coalesce_with_self_and_values={None, AddrIvalState.REVOKED})
+                                                   coalesce_with_self_and_values={AddrIvalState.REVOKED},
+                                                   coalesce_beyond_values={None})
             olaps_coalesced.append(ival)
             while ivals and ival.end >= ivals[-1].begin:
                 assert ival.end > ivals[-1].begin, '{0} failed to coalesce with {1}'.format(ival, ivals[-1])
