@@ -94,7 +94,6 @@ class BaseIntervalAddrSpaceModel(BaseAddrSpaceModel):
         output.update()
 
 
-    # XXX-LPT: is there a coalesce_with parameter equivalent to addr_ival_coalesced
     def addr_ivals_coalesced_sorted(self, begin=None, end=None):
         if begin is not None and end is not None:
             return [i for i in self.__addr_ivals[begin:end] if i.value is not None]
@@ -109,8 +108,6 @@ class BaseIntervalAddrSpaceModel(BaseAddrSpaceModel):
 class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
     def __init__(self):
         super().__init__(calc_total_for_state=AddrIvalState.ALLOCD)
-        # _addr_ivals should be protected (i.e. named __addr_ivals), but external visibility
-        # is still needed; see intervaltree_query_coalesced and its usage
         bkg_ival = AddrIval(0, 2**64, None)
         self.__addr_ivals = IntervalMap.from_valued_interval_domain(bkg_ival, coalescing=False)
         self._realloc_stubs = IntervalMap.from_valued_interval_domain(bkg_ival)
@@ -123,7 +120,7 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
 
     def allocd(self, stk, tid, begin, end):
         interval = AddrIval(begin, end, AddrIvalState.ALLOCD)
-        overlaps = self.addr_ivals(begin, end)
+        overlaps = self.addr_ivals_sorted(begin, end)
         overlaps_allocd = [o for o in overlaps if o.state is AddrIvalState.ALLOCD]
         overlaps_freed = [o for o in overlaps if o.state is AddrIvalState.FREED]
         overlaps_stubs = [o for o in self._realloc_stubs[begin:end] if o.state is AddrIvalState.FREED]
@@ -208,7 +205,7 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
     def revoked(self, stk, tid, *bes):
         if not isinstance(bes[0], tuple):
             bes = [(bes[0], bes[1])]
-        query_and_overlaps = [((b, e), self.addr_ivals(b, e)) for b, e in bes]
+        query_and_overlaps = [((b, e), self.addr_ivals_sorted(b, e)) for b, e in bes]
         overlaps_allocd = [i for i in itertools.chain(*(overlaps for _, overlaps in query_and_overlaps))
                            if i.state is AddrIvalState.ALLOCD]
         if overlaps_allocd:
@@ -231,11 +228,11 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
             self._realloc_stubs.remove(ival)
 
 
-    def addr_ivals(self, begin=None, end=None):
+    def addr_ivals_sorted(self, begin=None, end=None):
         return [i for i in self.__addr_ivals[begin:end] if i.value is not None]
 
-    def addr_ival(self, point):
-        i = self.__addr_ivals[point]
+    def addr_ival(self, point, **kwds):
+        i = self.__addr_ivals.get(point, **kwds)
         return i if i.value is not None else None
 
 
@@ -339,7 +336,7 @@ class BaseSweepingRevoker(AllocatedAddrSpaceModelSubscriber):
 
 class SimpleSweepingRevoker(BaseSweepingRevoker):
     def reused(self, alloc_state, stk, tid, begin, end):
-        intervals = [i for i in alloc_state.addr_ivals(begin, end) if i.state is AddrIvalState.FREED]
+        intervals = [i for i in alloc_state.addr_ivals_sorted(begin, end) if i.state is AddrIvalState.FREED]
         if intervals:
             self._sweep(addr_space.sweep_size, intervals)
         for ival in intervals:
@@ -348,8 +345,8 @@ class SimpleSweepingRevoker(BaseSweepingRevoker):
 
 class CompactingSweepingRevoker(BaseSweepingRevoker):
     def reused(self, alloc_state, stk, tid, begin, end):
-        overlaps = [i for i in alloc_state.addr_ivals(begin, end) if i.state is AddrIvalState.FREED]
-        olaps_coalesced = self._coalesce_freed_and_revoked(overlaps)
+        overlaps = [i for i in alloc_state.addr_ivals_sorted(begin, end) if i.state is AddrIvalState.FREED]
+        olaps_coalesced = self._coalesce_sorted_freed_with_revoked(overlaps)
 
         if olaps_coalesced:
             incr = True
@@ -357,13 +354,13 @@ class CompactingSweepingRevoker(BaseSweepingRevoker):
             while len(olaps_coalesced) < self._sweep_capacity_ivals and incr:
                 delta = self._sweep_capacity_ivals - len(olaps_coalesced)
                 ivals_prev = [i for i in
-                              alloc_state.addr_ivals(addr_bck - 0x1000, addr_bck)
+                              alloc_state.addr_ivals_sorted(addr_bck - 0x1000, addr_bck)
                               if i.state is AddrIvalState.FREED]
-                ivals_prev = CompactingSweepingRevoker._coalesce_freed_and_revoked(ivals_prev)[:delta//2 + delta%2]
+                ivals_prev = CompactingSweepingRevoker._coalesce_sorted_freed_with_revoked(ivals_prev)[:delta//2 + delta%2]
                 ivals_next = [i for i in
-                              alloc_state.addr_ivals(addr_fwd, addr_fwd + 0x1000)
+                              alloc_state.addr_ivals_sorted(addr_fwd, addr_fwd + 0x1000)
                               if i.state is AddrIvalState.FREED]
-                ivals_next = CompactingSweepingRevoker._coalesce_freed_and_revoked(ivals_next)[:delta//2]
+                ivals_next = CompactingSweepingRevoker._coalesce_sorted_freed_with_revoked(ivals_next)[:delta//2]
                 ivals_prev.extend(olaps_coalesced)
                 ivals_prev.extend(ivals_next)
                 olaps_coalesced = ivals_prev
@@ -376,8 +373,9 @@ class CompactingSweepingRevoker(BaseSweepingRevoker):
 
 
     @staticmethod
-    def _coalesce_freed_and_revoked(ivals):
-        ivals.sort(reverse=True)
+    def _coalesce_sorted_freed_with_revoked(ivals_sorted):
+        ivals = ivals_sorted
+        ivals.reverse()
         olaps_coalesced = []
 
         while ivals:
@@ -583,7 +581,7 @@ class RenderedAllocationMapOutput(DirectoryOutput):
         self._geom = geom
 
     def update(self):
-        addr_ivals = alloc_state.addr_ivals()
+        addr_ivals = alloc_state.addr_ivals_sorted()
         if not addr_ivals:
             return
 
@@ -613,7 +611,7 @@ class FreedAddrIvalsHistogramOutput(DirectoryOutput):
         self.update = BaseOutput.rate_limited_run_alloc_api_calls(period)(self.update)
 
     def update(self) :
-        freeszs = [i.size for i in alloc_state.addr_ivals() if i.value == AddrIvalState.FREED]
+        freeszs = [i.size for i in alloc_state.addr_ivals_sorted() if i.value == AddrIvalState.FREED]
         if not freeszs:
           return
 
