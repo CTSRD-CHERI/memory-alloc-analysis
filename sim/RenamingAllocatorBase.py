@@ -5,8 +5,8 @@
 # 
 # Children should implement all their logic transitively in
 #
-#  _alloc(stk, size) -> eva
-#  _free(stk, eva) -> None
+#  _alloc(stk, tid, size) -> eva
+#  _free(stk, tid, eva) -> None
 #  _try_realloc(stk, eva, nsz) -> Bool
 #
 # Children should publish their own version of events that this module
@@ -35,7 +35,7 @@ class RenamingAllocatorBase (Publisher):
 
     stk_delegate = stk if stk else 'malloc'
     sz = end - begin
-    eva = self._alloc(stk_delegate, sz)
+    eva = self._alloc(stk_delegate, tid, sz)
     self._tva2eva[begin] = eva
     self._publish('allocd', stk, tid, eva, eva+sz)
 
@@ -45,7 +45,7 @@ class RenamingAllocatorBase (Publisher):
     eva = self._tva2eva.get(begin, None)
     if eva is not None :
       self._publish('freed', stk, tid, eva)
-      self._free(stk_delegate, eva)
+      self._free(stk_delegate, tid, eva)
       del self._tva2eva[begin]
 
   def reallocd(self, stk, tid, begin_old, begin_new, end_new):
@@ -58,8 +58,8 @@ class RenamingAllocatorBase (Publisher):
         return self._publish('reallocd', stk, tid, evao, evao, evao+szn)
 
       # otherwise, alloc new thing, free old thing
-      evan = self._alloc(stk_delegate, szn)
-      self._free(stk_delegate, evao)
+      evan = self._alloc(stk_delegate, tid, szn)
+      self._free(stk_delegate, tid, evao)
 
       # Update TVA map; delete old then add new in case of equality
       del self._tva2eva[begin_old]

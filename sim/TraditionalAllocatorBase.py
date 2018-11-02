@@ -476,7 +476,7 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
     self._evp2pst.mark(pbase, plim-pbase, PageSt.UMAP)
 
 
-  def _free(self, stk, loc):
+  def _free(self, stk, tid, loc):
     if self._paranoia > PARANOIA_STATE_PER_OPER : self._state_asserts()
     assert self._eva2sst[loc][2] == SegSt.WAIT, "free non-WAIT?"
 

@@ -55,9 +55,9 @@ class Allocator(TraditionalAllocatorBase):
 
     return pos
 
-  def _free(self, stk, eva):
+  def _free(self, stk, tid, eva):
     del self._eva2oid[eva]
-    super(__class__,self)._free(stk, eva)
+    super(__class__,self)._free(stk, tid, eva)
 
   # This is kind of gross; we reach all the way back into
   # RenamingAllocatorBase to handle this one ourselves.
@@ -93,6 +93,6 @@ class Allocator(TraditionalAllocatorBase):
         self._tva2eva[ntva] = pos
         self._eva2oid[pos] = oid
 
-        self._free(stk, oeva)
+        self._free(stk, tid, oeva)
 
         self._publish('reallocd', stk, tid, oeva, pos, pos+sz)

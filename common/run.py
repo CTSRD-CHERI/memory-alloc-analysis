@@ -169,7 +169,7 @@ class Unrun:
     def allocd(self, publ, stk, tid, begin, end):
         # XXX we lose information about precisely which allocator call it was
         # (i.e. malloc vs. calloc vs. aligned_alloc vs. posix_memalign ....)
-        print("%d\t%s\tmalloc\t%d\t%x" % (self._tslam(), stk, end - begin, begin), file=self._out)
+        print("%d\t%s\t%s\tmalloc\t%d\t%x" % (self._tslam(), stk, tid, end - begin, begin), file=self._out)
 
     def freed(self, publ, stk, tid, begin):
         print("%d\t%s\t%s\tfree\t%x\t" % (self._tslam(), stk, tid, begin), file=self._out)
