@@ -495,11 +495,11 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
     # possibly for some material on either side.
     # XXX configurable policy
     if qsz > (16 * 2**self._pagelog) :
-      self._ensure_unmapped(stk, qb, qsz)
+      self._ensure_unmapped(stk, tid, qb, qsz)
 
     self._maybe_revoke()
 
-  def _free_unsafe(self, stk, loc):
+  def _free_unsafe(self, stk, tid, loc):
     if self._paranoia > PARANOIA_STATE_PER_OPER : self._state_asserts()
     assert self._eva2sst[loc][2] == SegSt.WAIT, "free non-WAIT?"
 
@@ -513,7 +513,7 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
     (qb, qsz, qv) = self._eva2sst.get(loc)
     assert qv == SegSt.TIDY
     if qsz > (16 * 2**self._pagelog) :
-      self._ensure_unmapped(stk, qb, qsz)
+      self._ensure_unmapped(stk, tid, qb, qsz)
 
 # --------------------------------------------------------------------- }}}
 # Realloc ------------------------------------------------------------- {{{
