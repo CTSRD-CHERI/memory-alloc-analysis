@@ -175,7 +175,7 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
     self._njunk    = 0
     self._nmapped  = 0
     self._nwait    = 0
-    self._tidylst  = SegFreeList()
+    self._tidylst  = SegFreeList(extcoal=self._sfl_coalesce)
     self._wildern  = baseva
 
 # --------------------------------------------------------------------- }}}
@@ -272,14 +272,16 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
 # --------------------------------------------------------------------- }}}
 # Revocation logic ---------------------------------------------------- {{{
 
+  def _sfl_coalesce(self, va) :
+    (qva, qsz, _) = self._eva2sst.get(va)
+    return (qva, qsz)
+
   # Mark a span TIDY.  This must not be used to re-mark any existing TIDY
   # span.
   #
   # Inserts the coalesced span at the end of tidylst.
   def _mark_tidy(self, loc, sz):
-      self._eva2sst.mark(loc, sz, SegSt.TIDY)
-      (cva, csz, _) = self._eva2sst[loc]
-      self._tidylst.insert_coalesced(loc, sz, cva, csz)
+      self._tidylst.insert(loc, sz)
 
   # An actual implementation would maintain a prioqueue or something;
   # we can get away with a linear scan.  We interrogate the segment state
