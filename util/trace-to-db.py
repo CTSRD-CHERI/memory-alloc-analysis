@@ -36,15 +36,15 @@ class MetadataTracker() :
         self._ia      = ia  # Insert Allocation   (on free)
         self._ir      = ir  # Insert Reallocation (on free or realloc)
 
-    def _allocd(self, stk, tva, sz, now):
+    def _allocd(self, stk, tid, tva, sz, now):
         oid = self._nextoid
         self._nextoid += 1
         self._tva2oid[tva] = oid
-        self._oid2amd[oid] = [stk, now, sz]
+        self._oid2amd[oid] = [stk, tid, now, sz]
 
         return oid
 
-    def allocd(self, stk, begin, end) :
+    def allocd(self, stk, tid, begin, end) :
         now = self._tslam()
 
         if self._tva2oid.get(begin, None) is not None:
@@ -53,10 +53,10 @@ class MetadataTracker() :
             logging.warn("malloc inserting free for tva=%x at ts=%d", begin, now)
             self.freed("", begin)
 
-        oid = self._allocd(stk, begin, end-begin, now)
+        oid = self._allocd(stk, tid, begin, end-begin, now)
         self._oid2rmd[oid]   = None
 
-    def freed(self, _, begin) :
+    def freed(self, _, tid, begin) :
         now = self._tslam()
 
         oid = self._tva2oid.pop(begin, None)
@@ -69,18 +69,18 @@ class MetadataTracker() :
 
         amd = self._oid2amd.pop(oid)
         irt = self._oid2irt.pop(oid, (None, self._sfree))
-        self._ia(oid, amd, irt, now)
+        self._ia(oid, amd, irt, now, tid)
 
         rmd = self._oid2rmd.pop(oid, None)
         if rmd is not None:
             self._ir(oid, rmd, now, self._sfree)
             # Free most recently reallocated size
-            self._sfree += rmd[3]
+            self._sfree += rmd[4]
         else :
             # Free original size
-            self._sfree += amd[2]
+            self._sfree += amd[3]
 
-    def reallocd(self, stk, otva, ntva, etva) :
+    def reallocd(self, stk, tid, otva, ntva, etva) :
         now = self._tslam()
         nsz = etva - ntva
 
@@ -92,8 +92,8 @@ class MetadataTracker() :
         oid = self._tva2oid.pop(otva, None)
         if oid is None :
             # allocation via realloc or damaged trace
-            oid = self._allocd(stk, ntva, nsz, now)
-            self._oid2rmd[oid] = (stk, now, 0, nsz)
+            oid = self._allocd(stk, tid, ntva, nsz, now)
+            self._oid2rmd[oid] = (stk, tid, now, 0, nsz)
         elif etva == ntva :
             # free via realloc
             self.freed(None, otva)
@@ -102,11 +102,11 @@ class MetadataTracker() :
             osz = None
             if rmd is not None :
                 self._ir(oid, rmd, now, self._sfree)
-                osz = rmd[3]
+                osz = rmd[4]
             else :
-                osz = self._oid2amd[oid][2]
+                osz = self._oid2amd[oid][3]
                 self._oid2irt[oid] = (now, self._sfree)
-            self._oid2rmd[oid] = (stk, now, osz, nsz)
+            self._oid2rmd[oid] = (stk, tid, now, osz, nsz)
             self._tva2oid[ntva] = oid
             self._sfree += osz
 
@@ -115,7 +115,7 @@ class MetadataTracker() :
       # restart a fresh iterator.
       while self._tva2oid != {} :
         k = next(iter(self._tva2oid.keys()))
-        self.freed("", k)
+        self.freed("", None, k)
 
 if __name__ == "__main__" and __package__ is None:
 
@@ -138,16 +138,19 @@ if __name__ == "__main__" and __package__ is None:
               ", stk TEXT UNIQUE NOT NULL)")
   con.execute("CREATE TABLE allocs "
               "(oid INTEGER PRIMARY KEY NOT NULL" # Object ID
+              ", atid INTEGER NOT NULL"           # Allocatng Thread ID
               ", sz INTEGER NOT NULL"             # SiZe
               ", stkid TEXT NOT NULL"             # STacK
               ", ats INTEGER NOT NULL"            # Allocation Time Stamp
               ", rts INTEGER"                     # Reallocation Time Stamp
               ", fts INTEGER"                     # Free Time Stamp
+              ", ftid INTEGER"                    # Free Thread ID
               ", sftf INTEGER NOT NULL"           # Sum Free at Time of Free/Realloc
               ", FOREIGN KEY(stkid) REFERENCES stacks(stkid)"
               ")")
   con.execute("CREATE TABLE reallocs "
               "(oid INTEGER NOT NULL"             # Object ID
+              ", rtid INTEGER NOT NULL"           # Thread ID doing realloc
               ", osz INTEGER NOT NULL"            # Old SiZe
               ", nsz INTEGER NOT NULL"            # New SiZe
               ", stkid INTEGER NOT NULL"          # STacK
@@ -167,25 +170,25 @@ if __name__ == "__main__" and __package__ is None:
     for (stkid,) in q : return stkid
 
   na = 0
-  def ia(oid, amd, irtf, fts) :
+  def ia(oid, amd, irtf, fts, ftid) :
     global na
-    (astk, ats, asz) = amd
+    (astk, atid, ats, asz) = amd
     (irt, sftf) = irtf
     stkid = istk(astk)
     con.execute("INSERT INTO allocs "
-                "(oid,sz,stkid,ats,rts,fts,sftf) VALUES (?,?,?,?,?,?,?)",
-                (oid,asz,stkid,ats,irt,fts,sftf)
+                "(oid,atid,sz,stkid,ats,rts,fts,ftid,sftf) VALUES (?,?,?,?,?,?,?,?,?)",
+                (oid,atid,asz,stkid,ats,irt,fts,ftid,sftf)
     )
     na += 1
 
   nr = 0
   def ir(oid, rmd, fts, sftf) :
     global nr
-    (rstk, rts, rosz, rnsz) = rmd
+    (rstk, rtid, rts, rosz, rnsz) = rmd
     stkid = istk(rstk)
     con.execute("INSERT INTO reallocs "
-                "(oid,osz,nsz,stkid,ats,fts,sftf) VALUES (?,?,?,?,?,?,?)",
-                (oid,rosz,rnsz,stkid,rts,fts,sftf)
+                "(oid,rtid,osz,nsz,stkid,ats,fts,sftf) VALUES (?,?,?,?,?,?,?,?)",
+                (oid,rtid,rosz,rnsz,stkid,rts,fts,sftf)
     )
     nr += 1
 
