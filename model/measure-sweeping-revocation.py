@@ -247,10 +247,10 @@ class MappedAddrSpaceModel(BaseIntervalAddrSpaceModel):
     def mapd_size(self):
         return self._total
 
-    def mapd(self, _, _, begin, end, __):
+    def mapd(self, _, __, begin, end, ___):
         self._update(AddrIval(begin, end, AddrIvalState.MAPD))
 
-    def unmapd(self, _, _, begin, end):
+    def unmapd(self, _, __, begin, end):
         self._update(AddrIval(begin, end, AddrIvalState.UNMAPD))
 
 
