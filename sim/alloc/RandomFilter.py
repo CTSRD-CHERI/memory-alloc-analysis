@@ -3,6 +3,9 @@
 # Extract a random, but coherent, subset of a trace.  That is, we will never
 # emit an event for an object we've decided not to allocate in the generated
 # trace.
+#
+# Adjust --screw from 0 (all objects rejected) to 256 (all objects pass).  Use
+# multiple passes, perhaps with with different --seeds, to further winnow.
 
 import argparse
 import marshal

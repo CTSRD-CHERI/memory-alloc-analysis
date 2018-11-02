@@ -3,7 +3,7 @@
 import argparse
 import itertools
 import math
-import matplotlib.colors as mplc
+import matplotlib.colors as plc
 import matplotlib.pyplot as plt
 import numpy
 import os
@@ -65,7 +65,7 @@ def draw(output, ltlim, szf, q, et, title=None) :
     d[ltf(fts-ats),szf(sz)] += 1
 
   plt.figure(figsize=(szf(None),10),dpi=100)
-  plt.imshow(d, norm=mplc.PowerNorm(0.3))
+  plt.imshow(d, norm=plc.PowerNorm(0.3))
   plt.ylabel("Lifetime (log10 nsec)")
   plt.xlabel("Object size bin")
   plt.tight_layout()

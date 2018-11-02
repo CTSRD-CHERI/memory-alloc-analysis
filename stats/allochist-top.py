@@ -15,7 +15,8 @@ import stats.allochist as ah
 
 argp = argparse.ArgumentParser(description='Generate histogram from allocation trace database')
 argp.add_argument('database', action='store', help="Input database")
-argp.add_argument('n', nargs='?', action='store', type=int, default=5)
+argp.add_argument('n', nargs='?', action='store', type=int, default=5,
+                  help='Top n to consider')
 argp.add_argument('--sizefn', action='store', type=str, default="compact",
                   choices=["compact", "lesscompact", "clingy"],
                   help="Size binning function"
@@ -25,8 +26,6 @@ argp.add_argument('--load-mangle-table', action='store', type=str, default=None,
 argp.add_argument('--stk-pfxre', action='store', type=ast.literal_eval, default=[ "" ],
                   help="Filter stack by prefix list of REs"
                  )
-argp.add_argument('--free-at-exit', action='store_const', const=True, default=False,
-                  help="Consider all objects free at end of trace")
 argp.add_argument('--no-stk-filter', action='store_const', const=True, default=False,
                   help="Use whole stacks for partitioning, not filtered values")
 argp.add_argument('--stk-xor', action='store', type=int, default=None,
@@ -37,6 +36,8 @@ argp.add_argument('--stk-xor-mask', action='store', type=int, default=None,
                   help="Mask stacks after xor-and-shift compression")
 argp.add_argument('--xlen', action='store', type=int, default=32, choices=[32,64],
                   help="Machine register bit width")
+argp.add_argument('--free-at-exit', action='store_const', const=True, default=False,
+                  help="Consider all objects free at end of trace")
 argp.add_argument('--just-testing', action='store', type=int, default=0,
                   help="Use a very small subset of allocations to test filters; 2 to disable rendering, too"
                  )
