@@ -236,6 +236,21 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
         return i if i.value is not None else None
 
 
+    def coalesce_sorted_ivals(self, ivals_sorted:list, **kwds):
+        ivals = ivals_sorted
+        ivals.reverse()
+        olaps_coalesced = []
+
+        while ivals:
+            ival = self.addr_ival(ivals.pop().begin, **kwds)
+            olaps_coalesced.append(ival)
+            while ivals and ival.end >= ivals[-1].begin:
+                assert ival.end > ivals[-1].begin, '{0} failed to coalesce with {1}'.format(ival, ivals[-1])
+                ivals.pop()
+
+        return olaps_coalesced
+
+
 class MappedAddrSpaceModel(BaseIntervalAddrSpaceModel):
     def __init__(self):
         super().__init__(calc_total_for_state=AddrIvalState.MAPD)
@@ -346,7 +361,9 @@ class SimpleSweepingRevoker(BaseSweepingRevoker):
 class CompactingSweepingRevoker(BaseSweepingRevoker):
     def reused(self, alloc_state, stk, tid, begin, end):
         overlaps = [i for i in alloc_state.addr_ivals_sorted(begin, end) if i.state is AddrIvalState.FREED]
-        olaps_coalesced = self._coalesce_sorted_freed_with_revoked(overlaps)
+        how_coalesce = {'coalesce_with_self_and_values': (AddrIvalState.REVOKED,),
+                        'coalesce_beyond_values': (None,)}
+        olaps_coalesced = alloc_state.coalesce_sorted_ivals(overlaps, **how_coalesce)
 
         if olaps_coalesced:
             incr = True
@@ -356,11 +373,11 @@ class CompactingSweepingRevoker(BaseSweepingRevoker):
                 ivals_prev = [i for i in
                               alloc_state.addr_ivals_sorted(addr_bck - 0x1000, addr_bck)
                               if i.state is AddrIvalState.FREED]
-                ivals_prev = CompactingSweepingRevoker._coalesce_sorted_freed_with_revoked(ivals_prev)[:delta//2 + delta%2]
+                ivals_prev = alloc_state.coalesce_sorted_ivals(ivals_prev, **how_coalesce)[:delta//2 + delta%2]
                 ivals_next = [i for i in
                               alloc_state.addr_ivals_sorted(addr_fwd, addr_fwd + 0x1000)
                               if i.state is AddrIvalState.FREED]
-                ivals_next = CompactingSweepingRevoker._coalesce_sorted_freed_with_revoked(ivals_next)[:delta//2]
+                ivals_next = alloc_state.coalesce_sorted_ivals(ivals_next, **how_coalesce)[:delta//2]
                 ivals_prev.extend(olaps_coalesced)
                 ivals_prev.extend(ivals_next)
                 olaps_coalesced = ivals_prev
@@ -370,24 +387,6 @@ class CompactingSweepingRevoker(BaseSweepingRevoker):
             self._sweep(addr_space.sweep_size, olaps_coalesced)
         for ival in olaps_coalesced:
             alloc_state.revoked(stk, tid, ival.begin, ival.end)
-
-
-    @staticmethod
-    def _coalesce_sorted_freed_with_revoked(ivals_sorted):
-        ivals = ivals_sorted
-        ivals.reverse()
-        olaps_coalesced = []
-
-        while ivals:
-            ival = alloc_state.addr_ival_coalesced(ivals.pop().begin,
-                                                   coalesce_with_self_and_values={AddrIvalState.REVOKED},
-                                                   coalesce_beyond_values={None})
-            olaps_coalesced.append(ival)
-            while ivals and ival.end >= ivals[-1].begin:
-                assert ival.end > ivals[-1].begin, '{0} failed to coalesce with {1}'.format(ival, ivals[-1])
-                ivals.pop()
-
-        return olaps_coalesced
 
 
 class BaseOutput:
@@ -611,15 +610,18 @@ class FreedAddrIvalsHistogramOutput(DirectoryOutput):
         self.update = BaseOutput.rate_limited_run_alloc_api_calls(period)(self.update)
 
     def update(self) :
-        freeszs = [i.size for i in alloc_state.addr_ivals_sorted() if i.value == AddrIvalState.FREED]
-        if not freeszs:
+        ivals_freed = [i for i in alloc_state.addr_ivals_sorted() if i.state is AddrIvalState.FREED]
+        if not ivals_freed:
           return
-
+        ivals_freed = alloc_state.coalesce_sorted_ivals(ivals_freed, coalesce_with_values=(AddrIvalState.FREED,),
+                                                        coalesce_beyond_values=(AddrIvalState.REVOKED,))
+        freeszs = [sum(i.size for i in alloc_state.addr_ivals_sorted(ival.begin, ival.end)
+                       if i.state is AddrIvalState.FREED) for ival in ivals_freed]
         now = run.timestamp_ns
 
         bins = 2**(numpy.arange(math.floor(math.log2(min(freeszs))),math.ceil(math.log2(max(freeszs))),0.25))
         plt.hist(freeszs,bins=bins,log=True)
-        plt.xlabel("Span size (log2 bytes)")
+        plt.xlabel("Span size (log bytes)")
         plt.xscale('log')
         plt.ylabel("Count")
         plt.title("FREED span histogram at time %d" % now)
