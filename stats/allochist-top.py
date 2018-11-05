@@ -1,5 +1,6 @@
 import argparse
 import ast
+import functools
 import itertools
 import logging
 import os
@@ -26,6 +27,14 @@ argp.add_argument('--free-at-exit', action='store_const', const=True, default=Fa
                   help="Consider all objects free at end of trace")
 argp.add_argument('--no-stk-filter', action='store_const', const=True, default=False,
                   help="Use whole stacks for partitioning, not filtered values")
+argp.add_argument('--stk-xor', action='store', type=int, default=None,
+                  help="Compress stacks by xor and shift")
+#argp.add_argument('--stk-xor-rotate', action='store_true', default=False,
+#                  help="Rotate, not shift, in xor stack compression")
+argp.add_argument('--stk-xor-mask', action='store', type=int, default=None,
+                  help="Mask stacks after xor-and-shift compression")
+argp.add_argument('--xlen', action='store', type=int, default=32, choices=[32,64],
+                  help="Machine register bit width")
 argp.add_argument('--just-testing', action='store', type=int, default=0,
                   help="Use a very small subset of allocations to test filters; 2 to disable rendering, too"
                  )
@@ -35,10 +44,24 @@ args = argp.parse_args()
 
 dbbn = os.path.splitext(os.path.basename(args.database))[0]
 
+if args.stk_xor is None :
+  if args.stk_xor_mask is not None :
+    print("xor-mask without xor does not make sense", file=sys.stderr)
+    os.exit(1)
+  # if args.stk_xor_rotate != False :
+  #   print("xor-rotate without xor does not make sense", file=sys.stderr)
+  #   os.exit(1)
+else :
+  if args.stk_xor_mask is None :
+    args.stk_xor_mask = 2**args.xlen - 1
+
 if args.no_stk_filter :
   fstr = 'full'
 else :
   fstr = '-'.join(args.stk_pfxre)
+
+if args.stk_xor is not None :
+  fstr += 'xor' + str(args.stk_xor)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)-15s %(levelname)s %(message)s" )
 if args.just_testing == 0 and not args.no_log :
@@ -79,6 +102,18 @@ if args.free_at_exit :
 
 sstks = con.execute("""SELECT count(*) FROM stacks ;""").fetchone()[0]
 
+if args.stk_xor is not None :
+  # if args.stk_xor_rotate :
+  #   if args.stk_xor >= 0 :
+  #     xs = lambda v,s : (v ^ (s << args.stk_xor)) & (args.stk_xor_mask)
+  # else :
+    if args.stk_xor >= 0 :
+      xs = lambda v,s : (v ^ (s << args.stk_xor)) & (args.stk_xor_mask)
+    else :
+      args.stk_xor = -args.stk_xor
+      xs = lambda v,s : (v ^ (s >> args.stk_xor)) & (args.stk_xor_mask)
+
+
 if not args.no_stk_filter :
   logging.info("Mangling %d stacks...", sstks)
   con.execute("""CREATE TEMP TABLE stkmangle (stkid INTEGER PRIMARY KEY, stk TEXT) ;""")
@@ -89,7 +124,11 @@ if not args.no_stk_filter :
     if stkwords == [] : continue
 
     if not all(map(lambda p : re.match(*p),zip(args.stk_pfxre, stkwords))) : continue
-    mangle = stkwords[len(args.stk_pfxre)]
+
+    if args.stk_xor is not None :
+      mangle = hex(functools.reduce(xs, map(lambda a : int(a,0), stkwords[::-1]), 0))
+    else :
+      mangle = stkwords[len(args.stk_pfxre)]
 
     hit += 1
     con.execute("""INSERT INTO stkmangle (stkid, stk) VALUES (?,?)""", (stkid, mangle))
