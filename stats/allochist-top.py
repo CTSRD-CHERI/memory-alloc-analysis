@@ -20,6 +20,8 @@ argp.add_argument('--sizefn', action='store', type=str, default="compact",
                   choices=["compact", "lesscompact", "clingy"],
                   help="Size binning function"
                  )
+argp.add_argument('--load-mangle-table', action='store', type=str, default=None,
+                  help='Load, do not compute, the stack mangle table')
 argp.add_argument('--stk-pfxre', action='store', type=ast.literal_eval, default=[ "" ],
                   help="Filter stack by prefix list of REs"
                  )
@@ -40,6 +42,8 @@ argp.add_argument('--just-testing', action='store', type=int, default=0,
                  )
 argp.add_argument('--no-log', action='store_const', const=True, default=False,
                   help="Disable generation of log file")
+argp.add_argument('--save-mangle-table', action='store', type=str, default=None,
+                  help="Save the mangled stack table to a file")
 args = argp.parse_args()
 
 dbbn = os.path.splitext(os.path.basename(args.database))[0]
@@ -57,6 +61,8 @@ else :
 
 if args.no_stk_filter :
   fstr = 'full'
+elif args.load_mangle_table :
+  fstr = os.path.basename(args.load_mangle_table)
 else :
   fstr = '-'.join(args.stk_pfxre)
 
@@ -114,7 +120,7 @@ if args.stk_xor is not None :
       xs = lambda v,s : (v ^ (s >> args.stk_xor)) & (args.stk_xor_mask)
 
 
-if not args.no_stk_filter :
+if not args.no_stk_filter and args.load_mangle_table is None :
   logging.info("Mangling %d stacks...", sstks)
   con.execute("""CREATE TEMP TABLE stkmangle (stkid INTEGER PRIMARY KEY, stk TEXT) ;""")
   hit = 0
@@ -136,8 +142,33 @@ if not args.no_stk_filter :
       logging.error("No stacks survived filter; bailing out")
       sys.exit(1)
   logging.info("Filter kept %d stacks", hit)
+elif not args.no_stk_filter and args.load_mangle_table is not None :
+  logging.info("Loading mangle table from file '%s'", args.load_mangle_table)
+  con.execute("""CREATE TEMP TABLE stkmangle (stkid INTEGER PRIMARY KEY, stk TEXT) ;""")
+
+  import csv
+  hit = 0
+  with open(args.load_mangle_table, 'r', newline='') as fi:
+    for row in csv.reader(fi,quoting=csv.QUOTE_NONNUMERIC) :
+      con.execute("""INSERT INTO stkmangle (stkid, stk) VALUES (?,?)""", row)
+      hit += 1
+
+  logging.info("Loaded mangle table with %d stacks", hit)
+elif args.no_stk_filter and args.load_mangle_table is not None :
+  logging.error("Mixing no-stack-filter and load-mangle-table?")
+  os.exit(1)
+
 
 if not args.no_stk_filter :
+  if args.save_mangle_table :
+    logging.info("Storing mangle table to file '%s'", args.save_mangle_table)
+
+    import csv
+    with open(args.save_mangle_table, 'w') as fo:
+      w = csv.writer(fo, quoting=csv.QUOTE_NONNUMERIC)
+      for row in con.execute("""SELECT stkid, stk FROM stkmangle""") :
+        w.writerow(row)
+
   logging.info("Creating filtered allocation table ...")
   con.execute("""CREATE TEMP TABLE fallocs AS SELECT allocs.* FROM %s """ \
               """ JOIN stkmangle ON allocs.stkid == stkmangle.stkid """ \
