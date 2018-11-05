@@ -77,21 +77,6 @@ if args.just_testing == 0 and not args.no_log :
     fl.setLevel(logging.DEBUG)
     logging.getLogger().addHandler(fl)
 
-alloctable = """allocs"""
-if args.just_testing != 0 :
-  # For much-accelerated testing: pull a small number of rows from all allocs
-  # (but be sure to pick those for which we have stacks)
-  if args.no_stk_filter :
-    alloctable = """(SELECT allocs.*""" \
-                 """  FROM allocs""" \
-                 """  LIMIT 2000)""" \
-                 """ AS allocs"""
-  else :
-    alloctable = """(SELECT allocs.*""" \
-                 """  FROM allocs""" \
-                 """  JOIN stkmangle ON allocs.stkid == stkmangle.stkid LIMIT 2000)""" \
-                 """ AS allocs"""
-
 con = sqlite3.connect(args.database)
 con.execute("""PRAGMA temp_store = 1 ;""")
 con.execute("""PRAGMA temp_store_directory = "/auto/homes/nwf20/scrl/memory-runs" ;""")
@@ -158,7 +143,8 @@ elif not args.no_stk_filter and args.load_mangle_table is not None :
 elif args.no_stk_filter and args.load_mangle_table is not None :
   logging.error("Mixing no-stack-filter and load-mangle-table?")
   os.exit(1)
-
+else : # no stack filter and no loaded table
+  con.execute("""CREATE TEMP VIEW stkmangle AS SELECT * FROM stacks;""")
 
 if not args.no_stk_filter :
   if args.save_mangle_table :
@@ -170,38 +156,39 @@ if not args.no_stk_filter :
       for row in con.execute("""SELECT stkid, stk FROM stkmangle""") :
         w.writerow(row)
 
-  logging.info("Creating filtered allocation table ...")
-  con.execute("""CREATE TEMP TABLE fallocs AS SELECT allocs.* FROM %s """ \
+if args.no_stk_filter or hit == sstks:
+  logging.info("All stacks survived; not filtering allocation table!")
+  con.execute("""CREATE TEMP VIEW fallocs AS SELECT allocs.*, stkmangle.stk FROM allocs """ \
               """ JOIN stkmangle ON allocs.stkid == stkmangle.stkid """ \
-              % (alloctable,))
+              """ LIMIT %d ;""" % ((-1 if args.just_testing == 0 else 2000),))
+  if args.just_testing == 0 :
+    salloc = con.execute("""SELECT value FROM miscmeta WHERE key = ? """, ("nallocs",)).fetchone()[0]
+  else :
+    salloc = con.execute("""SELECT COUNT(*) FROM fallocs""").fetchone()[0]
+else :
+  logging.info("Creating filtered allocation table ...")
+  con.execute("""CREATE TEMP TABLE fallocs AS SELECT allocs.*, stkmangle.stk FROM allocs """ \
+              """ JOIN stkmangle ON allocs.stkid == stkmangle.stkid """ \
+              """ LIMIT ? """,
+              ((-1 if args.just_testing == 0 else 2000),))
 
   salloc = con.execute("""SELECT COUNT(*) FROM fallocs""").fetchone()[0]
-else :
-  salloc = con.execute("""SELECT value FROM miscmeta WHERE key = ? """, ("nallocs",)).fetchone()[0]
 
 logging.info("Grouping %d allocs (this may take a long while)...", salloc)
 q = con.execute("""SELECT"""
-                """ COUNT(*) AS c, {0}, min(sz), max(sz)"""
-                """ FROM {1}"""
-                """ GROUP BY {0} ORDER BY c DESC LIMIT ?"""
-                .format( """ stkid """ if args.no_stk_filter else """ stk """
-                  , alloctable if args.no_stk_filter else
-                    """ fallocs JOIN stkmangle ON fallocs.stkid == stkmangle.stkid"""
-                  )
+                """ COUNT(*) AS c, stk, min(sz), max(sz)"""
+                """ FROM fallocs """
+                """ GROUP BY stk ORDER BY c DESC LIMIT ?"""
                 , (args.n,))
 for (c, stk, mi, ma) in q:
     out = "%s-%s-%s-all.png" % (dbbn, fstr, stk)
     logging.info("Generating %s (%d or %2.2f%% of allocs)", out, c, float(c)/salloc * 100.0)
 
     if args.just_testing < 2 :
-      q2 = con.execute("""SELECT sz, fts, ats as lt"""
-                       """ FROM {0} """
-                       """ WHERE {1} """
-                       """  AND sz BETWEEN ?2 AND ?3"""
-                       .format( alloctable if args.no_stk_filter else """ fallocs """
-                              , """ stkid == ?1 """ if args.no_stk_filter else
-                                """ stkid IN (SELECT stkid FROM stkmangle WHERE stk = ?) """
-                              ),
+      q2 = con.execute("""SELECT sz, fts, ats """
+                       """ FROM fallocs """
+                       """ WHERE fallocs.stkid IN (SELECT stkid FROM stkmangle WHERE stk = ?1) """
+                       """  AND sz BETWEEN ?2 AND ?3 """,
                        (stk,mi,ma))
       ah.draw(out, dt, ah.makeszf(mi,ma,flavor=args.sizefn), q2, aet,
                 title=("%s %s %s (%d)" % (dbbn, fstr, stk, c)))
