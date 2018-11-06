@@ -38,6 +38,8 @@ argp.add_argument('--xlen', action='store', type=int, default=32, choices=[32,64
                   help="Machine register bit width")
 argp.add_argument('--free-at-exit', action='store_const', const=True, default=False,
                   help="Consider all objects free at end of trace")
+argp.add_argument('--name-by-stkid', action='store', type=bool, default=None,
+                  help="If no filtering is done, use stkid not (mangled) stk name")
 argp.add_argument('--just-testing', action='store', type=int, default=0,
                   help="Use a very small subset of allocations to test filters; 2 to disable rendering, too"
                  )
@@ -174,11 +176,26 @@ else :
 
   salloc = con.execute("""SELECT COUNT(*) FROM fallocs""").fetchone()[0]
 
+if args.name_by_stkid is None :
+  if args.no_stk_filter :
+    args.name_by_stkid = True
+  else :
+    # If we were injective in the mangling pass, then default to naming by
+    # the stack identifier
+    ndstks = con.execute(""" SELECT COUNT(DISTINCT stk) FROM stkmangle; """).fetchone()[0]
+    args.name_by_stkid = (hit == ndstks)
+
+if args.name_by_stkid :
+  logging.info("Output file naming is by stack identifier, not mangled stack")
+else :
+  logging.info("Output file naming is by mangled stack")
+
 logging.info("Grouping %d allocs (this may take a long while)...", salloc)
 q = con.execute("""SELECT"""
-                """ COUNT(*) AS c, stk, min(sz), max(sz)"""
+                """ COUNT(*) AS c, %s, min(sz), max(sz)"""
                 """ FROM fallocs """
-                """ GROUP BY stk ORDER BY c DESC LIMIT ?"""
+                """ GROUP BY stk ORDER BY c DESC LIMIT ?""" \
+                    % ("stkid" if args.name_by_stkid else "stk")
                 , (args.n,))
 for (c, stk, mi, ma) in q:
     out = "%s-%s-%s-all.png" % (dbbn, fstr, stk)
@@ -187,8 +204,11 @@ for (c, stk, mi, ma) in q:
     if args.just_testing < 2 :
       q2 = con.execute("""SELECT sz, fts, ats """
                        """ FROM fallocs """
-                       """ WHERE fallocs.stkid IN (SELECT stkid FROM stkmangle WHERE stk = ?1) """
-                       """  AND sz BETWEEN ?2 AND ?3 """,
+                       """ WHERE %s """
+                       """  AND sz BETWEEN ?2 AND ?3 """ \
+                        % (""" stkid == ?1 """ if args.name_by_stkid else \
+                          """ fallocs.stkid IN (SELECT stkid FROM stkmangle WHERE stk = ?1) """
+                          ),
                        (stk,mi,ma))
       ah.draw(out, dt, ah.makeszf(mi,ma,flavor=args.sizefn), q2, aet,
                 title=("%s %s %s (%d)" % (dbbn, fstr, stk, c)))
