@@ -325,21 +325,10 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
         return [self._brscache]
 
     bests = [(0, -1, -1)] # [(njunk, bix, sz)] in ascending order
-    cursorbix = next(loc for (loc, _, _) in self._bix2state)
-    while cursorbix < self._maxbix :
-        # Exclude AHWM, which is like TIDY but would almost always be biggest
-        (qbase, qsz, qv) = self._bix2state[cursorbix]
-        if qv in st_tj:
-            (qbase, qsz, qv) = self._bix2state.get(cursorbix,
-                                coalesce_with_values=st_tj)
-        assert (qbase == cursorbix), \
-           ("JUNK hunt index", qbase, cursorbix, qv, qsz, list(self._bix2state))
-        # Advance cursor now so we can just continue in the below tests
-        cursorbix += qsz
+    for (qbase, qsz, qv) in self._bix2state.iter_vfilter(None, self._maxbix, st_tj):
 
         # Smaller or busy spans don't interest us
         if qsz <= bests[0][0] : continue
-        if qv not in st_tj : continue
 
         # Reject spans that are entirely TIDY already.
         js = [sz for (_, sz, v) in self._bix2state[qbase:qbase+qsz]
@@ -447,14 +436,14 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
         rset.add(brss[-1])
         brss = brss[:-1]
 
+      self._do_revoke(rset)
+
       # Find the largest best span not used and update the cache
       while brss != [] :
         if brss[-1] not in rset : break
         brss = brss[:-1]
       if brss != [] : self._brscache = brss[-1]
       else          : self._brscache = (0, -1, -1)
-
-      self._do_revoke(rset)
 
   @abstractmethod
   def _maybe_revoke(self) :

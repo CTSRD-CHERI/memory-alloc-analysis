@@ -147,6 +147,15 @@ class IntervalMap:
 
         return (base, sz, v)
 
+    def iter_vfilter(self, begin, end, vset):
+      cursor = begin if begin is not None else next(loc for (loc, _, _) in self)
+      while cursor < end:
+        (qbase, qsz, qv) = self.get(cursor)
+        if qv in vset :
+          (qbase, qsz, qv) = self.get(cursor, coalesce_with_values=vset)
+        assert qbase == cursor
+        cursor = min(cursor + qsz, end)
+        yield (qbase, cursor - qbase, qv)
 
     @should_return_ivals
     def __getitem__(self, loc):

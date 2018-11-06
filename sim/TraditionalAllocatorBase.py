@@ -284,43 +284,35 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
   # An actual implementation would maintain a prioqueue or something;
   # we can get away with a linear scan.  We interrogate the segment state
   # interval map for ease of coalescing, even though we also maintain a
-  # parallel JUNK LRU queue
+  # parallel JUNK LRU queue.  Returns spans as (njunk, base, size) triples,
+  # coalescing JUNK and TIDY segments together.
   def _find_largest_revokable_spans(self, n=1):
     if n == 0 : return
     if n == 1 and self._brscache is not None :
         return [self._brscache]
 
     bests = [(0, -1, -1)] # [(njunk, loc, sz)] in ascending order
-    cursorloc = next(loc for (loc, _, _) in self._eva2sst)
-    while cursorloc < self._wildern :
-        # Exclude AHWM, which is like TIDY but would almost always be biggest
-        (qbase, qsz, qv) = self._eva2sst[cursorloc]
-        if qv in sst_tj:
-            (qbase, qsz, qv) = self._bix2state.get(cursorloc,
-                                coalesce_with_values=sst_tj)
-        assert (qbase == cursorloc), \
-           ("JUNK hunt index", qbase, cursorloc, qv, qsz, list(self._eva2sst))
-        # Advance cursor now so we can just continue in the below tests
-        # Note that this is not a straight sum because we could have
-        # coalesced backwards.  In that case, we are about to bounce out
-        # of this iteration with the qv sst_tj check.
-        cursorloc = qbase + qsz
+    for (qbase, qsz, qv) in self._eva2sst.iter_vfilter(None, self._wildern, sst_tj):
 
-        # Smaller or busy spans don't interest us
+        # smaller spans don't interest us
         if qsz <= bests[0][0] : continue
-        if qv not in sst_tj : continue
 
         # Reject spans that are entirely TIDY already.
         js = [sz for (_, sz, v) in self._eva2sst[qbase:qbase+qsz]
                   if v == SegSt.JUNK]
         if js == [] : continue
 
-        # Sort spans by number of JUNK buckets, not JUNK|TIDY buckets
+        # Sort spans by number of JUNK bytes, not JUNK|TIDY bytes
         nj = sum(js)
         if nj <= bests[0][0] : continue
         insort(bests, (nj, qbase, qsz))
 
         bests = bests[(-n):]
+
+    # Go ahead and set this now, even though it's likely we're about to
+    # use this span in revocation and, so, invalidate this cache.  Still,
+    # if we don't, so much the better, yeah?
+    self._brscache = bests[-1]
 
     return [best for best in bests if best[1] >= 0]
 
@@ -367,13 +359,13 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
       rset.add(brss[-1])
       brss = brss[:-1]
 
+    self._do_revoke(rset)
+
     while brss != [] :
       if brss[-1] not in rset : break
       brss = brss[:-1]
     if brss != [] : self._brscache = brss[-1]
     else          : self._brscache = (0, -1, -1)
-
-    self._do_revoke(rset)
 
   @abstractmethod
   def _maybe_revoke(self):
