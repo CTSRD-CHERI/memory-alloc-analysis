@@ -330,7 +330,8 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
         # Exclude AHWM, which is like TIDY but would almost always be biggest
         (qbase, qsz, qv) = self._bix2state.get(cursorbix,
                             coalesce_with_values=st_tj)
-        assert qbase == cursorbix, "JUNK hunt index"
+        assert (qbase == cursorloc) or (qv not in sst_tj), \
+           ("JUNK hunt index", qbase, cursorloc, qv, qsz, list(self._eva2sst))
         # Advance cursor now so we can just continue in the below tests
         cursorbix += qsz
 
