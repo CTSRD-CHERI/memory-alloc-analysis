@@ -109,4 +109,4 @@ if __name__ == "__main__" and __package__ is None:
 
     q = con.execute("""SELECT sz, fts, ats as lt FROM allocs JOIN stacks ON allocs.stkid = stacks.stkid WHERE stk LIKE ? and sz BETWEEN ? AND ?""", (stklike,szmin,szlim))
 
-    draw(args.output, dt, mkszf(szmin, szmax), q, aet)
+    draw(args.output, dt, makeszf(szmin, szlim, "compact"), q, aet)
