@@ -294,9 +294,11 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
     cursorloc = next(loc for (loc, _, _) in self._eva2sst)
     while cursorloc < self._wildern :
         # Exclude AHWM, which is like TIDY but would almost always be biggest
-        (qbase, qsz, qv) = self._eva2sst.get(cursorloc,
-                            coalesce_with_values=sst_tj)
-        assert (qbase == cursorloc) or (qv not in sst_tj), \
+        (qbase, qsz, qv) = self._eva2sst[cursorloc]
+        if qv in sst_tj:
+            (qbase, qsz, qv) = self._bix2state.get(cursorloc,
+                                coalesce_with_values=sst_tj)
+        assert (qbase == cursorloc), \
            ("JUNK hunt index", qbase, cursorloc, qv, qsz, list(self._eva2sst))
         # Advance cursor now so we can just continue in the below tests
         # Note that this is not a straight sum because we could have

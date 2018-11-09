@@ -328,10 +328,12 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
     cursorbix = next(loc for (loc, _, _) in self._bix2state)
     while cursorbix < self._maxbix :
         # Exclude AHWM, which is like TIDY but would almost always be biggest
-        (qbase, qsz, qv) = self._bix2state.get(cursorbix,
-                            coalesce_with_values=st_tj)
-        assert (qbase == cursorloc) or (qv not in sst_tj), \
-           ("JUNK hunt index", qbase, cursorloc, qv, qsz, list(self._eva2sst))
+        (qbase, qsz, qv) = self._bix2state[cursorbix]
+        if qv in st_tj:
+            (qbase, qsz, qv) = self._bix2state.get(cursorbix,
+                                coalesce_with_values=st_tj)
+        assert (qbase == cursorbix), \
+           ("JUNK hunt index", qbase, cursorbix, qv, qsz, list(self._bix2state))
         # Advance cursor now so we can just continue in the below tests
         cursorbix += qsz
 
