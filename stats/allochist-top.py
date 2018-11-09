@@ -202,13 +202,21 @@ for (c, stk, mi, ma) in q:
     logging.info("Generating %s (%d or %2.2f%% of allocs)", out, c, float(c)/salloc * 100.0)
 
     if args.just_testing < 2 :
-      q2 = con.execute("""SELECT sz, fts, ats """
-                       """ FROM fallocs """
-                       """ WHERE %s """
-                       """  AND sz BETWEEN ?2 AND ?3 """ \
-                        % (""" stkid == ?1 """ if args.name_by_stkid else \
-                          """ fallocs.stkid IN (SELECT stkid FROM stkmangle WHERE stk = ?1) """
-                          ),
-                       (stk,mi,ma))
-      ah.draw(out, dt, ah.makeszf(mi,ma,flavor=args.sizefn), q2, aet,
+
+      def qgen() :
+        if args.name_by_stkid :
+          stkids = [stk]
+        else :
+          stkids = map(lambda x : x[0],
+                       con.execute("""SELECT stkid FROM stkmangle WHERE stk = ?""", (stk,)))
+
+        for stkid in stkids :
+          c = 0
+          for row in con.execute("""SELECT sz, fts, ats FROM fallocs"""
+                                 """ WHERE stkid == ? AND sz BETWEEN ? AND ?""", (stkid, mi, ma)) :
+            yield row
+            c += 1
+          logging.info("  %d allocs from stack id %s", c, stkid)
+
+      ah.draw(out, dt, ah.makeszf(mi,ma,flavor=args.sizefn), qgen(), aet,
                 title=("%s %s %s (%d)" % (dbbn, fstr, stk, c)))
