@@ -25,7 +25,7 @@ from common.run import Run
 kviq = "INSERT INTO miscmeta (key,value) VALUES (?,?)"
 
 class MetadataTracker() :
-    def __init__(self, tslam, ia, ir) :
+    def __init__(self, tslam, istk, ia, ir) :
         self._sfree   = 0
         self._nextoid = 1
         self._tva2oid = {}  # OIDs
@@ -33,6 +33,7 @@ class MetadataTracker() :
         self._oid2irt = {}  # Initial Reallocation Timestamp & sftf
         self._oid2rmd = {}  # most recent Reallocation metadata (stk, ts, osz, nsz)
         self._tslam   = tslam
+        self._istk    = istk
         self._ia      = ia  # Insert Allocation   (on free)
         self._ir      = ir  # Insert Reallocation (on free or realloc)
 
@@ -110,6 +111,9 @@ class MetadataTracker() :
             self._tva2oid[ntva] = oid
             self._sfree += osz
 
+    def mapd(self, stk, tid, b, e, prot): self._istk(stk)
+    def unmapd(self, stk, tid, b, e): self._istk(stk)
+
     def finish(self) :
       # Can't just iterate the keys, because free deletes.  So just repeatedly
       # restart a fresh iterator.
@@ -117,10 +121,24 @@ class MetadataTracker() :
         k = next(iter(self._tva2oid.keys()))
         self.freed("", None, k)
 
+class JustStacks():
+  def __init__(self, istk) :
+    self._istk = istk
+
+  def allocd  (self, stk, tid, begin, end) : self._istk(stk)
+  def freed   (self, stk, tid, begin)      : self._istk(stk)
+  def reallocd(self, stk, tid, bo, bn, en) : self._istk(stk)
+  def mapd    (self, stk, tid, b, e, prot) : self._istk(stk)
+  def unmapd  (self, stk, tid, b, e)       : self._istk(stk)
+
 if __name__ == "__main__" and __package__ is None:
 
   argp = argparse.ArgumentParser(description='Generate a database of allocation metadata')
   argp.add_argument('database', action='store', help="Output database")
+  argp.add_argument("--just-stacks", type=bool, default=False,
+                    help="Just create the stack table")
+  argp.add_argument("--add-indices", type=bool, default=True,
+                    help="Create hopefully-helpful indices, too")
   argp.add_argument("--log-level", help="Set the logging level",
                     choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
                     default="INFO")
@@ -136,80 +154,93 @@ if __name__ == "__main__" and __package__ is None:
   con.execute("CREATE TABLE stacks "
               "(stkid INTEGER PRIMARY KEY NOT NULL"
               ", stk TEXT UNIQUE NOT NULL)")
-  con.execute("CREATE TABLE allocs "
-              "(oid INTEGER PRIMARY KEY NOT NULL" # Object ID
-              ", atid INTEGER NOT NULL"           # Allocatng Thread ID
-              ", sz INTEGER NOT NULL"             # SiZe
-              ", stkid TEXT NOT NULL"             # STacK
-              ", ats INTEGER NOT NULL"            # Allocation Time Stamp
-              ", rts INTEGER"                     # Reallocation Time Stamp
-              ", fts INTEGER"                     # Free Time Stamp
-              ", ftid INTEGER"                    # Free Thread ID
-              ", sftf INTEGER NOT NULL"           # Sum Free at Time of Free/Realloc
-              ", FOREIGN KEY(stkid) REFERENCES stacks(stkid)"
-              ")")
-  con.execute("CREATE TABLE reallocs "
-              "(oid INTEGER NOT NULL"             # Object ID
-              ", rtid INTEGER NOT NULL"           # Thread ID doing realloc
-              ", osz INTEGER NOT NULL"            # Old SiZe
-              ", nsz INTEGER NOT NULL"            # New SiZe
-              ", stkid INTEGER NOT NULL"          # STacK
-              ", ats INTEGER NOT NULL"            # Allocaton Time Stamp
-              ", fts INTEGER"                     # Free Time Stamp
-              ", sftf INTEGER NOT NULL"           # Sum Free at Time of Free
-              ", FOREIGN KEY(stkid) REFERENCES stacks(stkid)"
-              ")")
-  con.execute("CREATE TABLE miscmeta "
-              "(key TEXT UNIQUE NOT NULL"
-              ", value NOT NULL"
-              ")")
 
   def istk(stk) :
     con.execute("INSERT OR IGNORE INTO stacks (stk) VALUES (?)", (stk,))
     q = con.execute("SELECT stkid FROM stacks WHERE stk = ?", (stk,))
     for (stkid,) in q : return stkid
 
-  na = 0
-  def ia(oid, amd, irtf, fts, ftid) :
-    global na
-    (astk, atid, ats, asz) = amd
-    (irt, sftf) = irtf
-    stkid = istk(astk)
-    con.execute("INSERT INTO allocs "
-                "(oid,atid,sz,stkid,ats,rts,fts,ftid,sftf) VALUES (?,?,?,?,?,?,?,?,?)",
-                (oid,atid,asz,stkid,ats,irt,fts,ftid,sftf)
-    )
-    na += 1
+  if not args.just_stacks :
+    con.execute("CREATE TABLE allocs "
+                "(oid INTEGER PRIMARY KEY NOT NULL" # Object ID
+                ", atid INTEGER NOT NULL"           # Allocatng Thread ID
+                ", sz INTEGER NOT NULL"             # SiZe
+                ", stkid TEXT NOT NULL"             # STacK
+                ", ats INTEGER NOT NULL"            # Allocation Time Stamp
+                ", rts INTEGER"                     # Reallocation Time Stamp
+                ", fts INTEGER"                     # Free Time Stamp
+                ", ftid INTEGER"                    # Free Thread ID
+                ", sftf INTEGER NOT NULL"           # Sum Free at Time of Free/Realloc
+                ", FOREIGN KEY(stkid) REFERENCES stacks(stkid)"
+                ")")
+    if args.add_indices :
+      con.execute("CREATE INDEX ix_allocs_stkid_oid "
+                  " ON allocs (stkid, oid)")
+    con.execute("CREATE TABLE reallocs "
+                "(oid INTEGER NOT NULL"             # Object ID
+                ", rtid INTEGER NOT NULL"           # Thread ID doing realloc
+                ", osz INTEGER NOT NULL"            # Old SiZe
+                ", nsz INTEGER NOT NULL"            # New SiZe
+                ", stkid INTEGER NOT NULL"          # STacK
+                ", ats INTEGER NOT NULL"            # Allocaton Time Stamp
+                ", fts INTEGER"                     # Free Time Stamp
+                ", sftf INTEGER NOT NULL"           # Sum Free at Time of Free
+                ", FOREIGN KEY(stkid) REFERENCES stacks(stkid)"
+                ")")
+    if args.add_indices :
+      con.execute("CREATE INDEX ix_reallocs_stkid_oid "
+                  " ON reallocs (stkid, oid)")
+    con.execute("CREATE TABLE miscmeta "
+                "(key TEXT UNIQUE NOT NULL"
+                ", value NOT NULL"
+                ")")
 
-  nr = 0
-  def ir(oid, rmd, fts, sftf) :
-    global nr
-    (rstk, rtid, rts, rosz, rnsz) = rmd
-    stkid = istk(rstk)
-    con.execute("INSERT INTO reallocs "
-                "(oid,rtid,osz,nsz,stkid,ats,fts,sftf) VALUES (?,?,?,?,?,?,?,?)",
-                (oid,rtid,rosz,rnsz,stkid,rts,fts,sftf)
-    )
-    nr += 1
+    na = 0
+    def ia(oid, amd, irtf, fts, ftid) :
+      global na
+      (astk, atid, ats, asz) = amd
+      (irt, sftf) = irtf
+      stkid = istk(astk)
+      con.execute("INSERT INTO allocs "
+                  "(oid,atid,sz,stkid,ats,rts,fts,ftid,sftf) VALUES (?,?,?,?,?,?,?,?,?)",
+                  (oid,atid,asz,stkid,ats,irt,fts,ftid,sftf)
+      )
+      na += 1
+
+    nr = 0
+    def ir(oid, rmd, fts, sftf) :
+      global nr
+      (rstk, rtid, rts, rosz, rnsz) = rmd
+      stkid = istk(rstk)
+      con.execute("INSERT INTO reallocs "
+                  "(oid,rtid,osz,nsz,stkid,ats,fts,sftf) VALUES (?,?,?,?,?,?,?,?)",
+                  (oid,rtid,rosz,rnsz,stkid,rts,fts,sftf)
+      )
+      nr += 1
 
   run = Run(sys.stdin)
-  tslam = lambda : run.timestamp_ns
-  at = MetadataTracker(tslam, ia, ir)
-  run._trace_listeners += [ at ]
-  run.replay()
 
-  con.execute(kviq, ("firsttime", run.timestamp_initial_ns))
-  con.execute(kviq, ("lasttime", run.timestamp_ns))
+  if args.just_stacks :
+    run._trace_listeners += [ JustStacks(istk) ]
+    run.replay()
+  else :
+    tslam = lambda : run.timestamp_ns
+    at = MetadataTracker(tslam, istk, ia, ir)
+    run._trace_listeners += [ at ]
+    run.replay()
 
-  at._tslam = lambda : None
-  at.finish()
+    con.execute(kviq, ("firsttime", run.timestamp_initial_ns))
+    con.execute(kviq, ("lasttime", run.timestamp_ns))
 
-  con.execute(kviq, ("nallocs", na))
-  con.execute(kviq, ("nreallocs", nr))
+    at._tslam = lambda : None
+    at.finish()
+
+    con.execute(kviq, ("nallocs", na))
+    con.execute(kviq, ("nreallocs", nr))
+
+    print("Aggregate statistics", file=sys.stderr)
+    print("  %d allocations" % na, file=sys.stderr)
+    print("  %d reallocs" % nr, file=sys.stderr)
 
   con.commit()
   con.close()
-
-  print("Aggregate statistics", file=sys.stderr)
-  print("  %d allocations" % na, file=sys.stderr)
-  print("  %d reallocs" % nr, file=sys.stderr)
