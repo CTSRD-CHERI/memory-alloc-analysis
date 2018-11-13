@@ -391,13 +391,16 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
 
   def _ensure_mapped(self, event, reqbase, reqsz) :
     pbase = self._eva2evp(reqbase)
-    plim  = self._eva2evp(reqbase + reqsz - 1)
+    plim  = self._eva2evp(reqbase + reqsz - 1) + 1
     for (qb, qsz, qv) in self._evp2pst[pbase:plim] :
       if qv == PageSt.MAPD : continue
-      if qb + qsz > plim : qsz = plim - qb
-      self._nmapped += self._npg2nby(qsz)
-      self._publish('mapd', event, self._evp2eva(qb), self._evp2eva(qb + qsz), 0b11)
-    self._evp2pst.mark(pbase, plim-pbase+1, PageSt.MAPD)
+
+      b = max(qb, pbase)
+      l = min(qb + qsz, plim)
+
+      self._nmapped += self._npg2nby(l-b)
+      self._publish('mapd', event, self._evp2eva(b), self._evp2eva(l), 0b11)
+    self._evp2pst.mark(pbase, plim-pbase, PageSt.MAPD)
 
   def _mark_allocated(self, reqbase, reqsz) :
     if self._paranoia > PARANOIA_STATE_PER_OPER:
@@ -479,8 +482,12 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
 
     for (qb, qsz, qv) in self._evp2pst[pbase:plim] :
       if qv == PageSt.UMAP : continue
-      self._nmapped -= self._npg2nby(qsz)
-      self._publish('unmapd', event, self._evp2eva(qb), self._evp2eva(qb + qsz))
+
+      b = max(qb, pbase)
+      l = min(qb + qsz, plim)
+
+      self._nmapped -= self._npg2nby(l-b)
+      self._publish('unmapd', event, self._evp2eva(b), self._evp2eva(l))
     self._evp2pst.mark(pbase, plim-pbase, PageSt.UMAP)
 
   def _free(self, event, loc):
