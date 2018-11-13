@@ -83,19 +83,22 @@ class SegFreeListBase :
     return sz
 
   # Insert a span containing the virtual addresses [va, va+sz).
-  def _insert_core(self, va, sz):
+  def _insert_core(self, va, sz, front):
     gdn = self.glru.insert(va)                              # global lru
-    sdn = self.segs[self._segix(sz)].insert((va,sz))        # seg lru
+    if front :
+      sdn = self.segs[self._segix(sz)].appendleft((va,sz))  # seg lru
+    else :
+      sdn = self.segs[self._segix(sz)].insert((va,sz))      # seg lru
     self.adns[va] = (sdn, gdn)                              # index
     self.minv = va if self.minv is None else min(self.minv, va)
 
-  def _insert_extcoal(self, va, sz) :
+  def _insert_extcoal(self, va, sz, front=False) :
     (cva, csz) = self.acod(va)
     if va != cva : self._remove_common(cva)              # coalesced left
     if cva + csz != va + sz : self._remove_common(va+sz) # coalesced right
-    self._insert_core(cva, csz)
+    self._insert_core(cva, csz, front)
 
-  def _insert_intcoal(self, va, sz) :
+  def _insert_intcoal(self, va, sz, front=False) :
     end = va + sz
     lsva = self.acod.get(va)                             # coalesced left
     if lsva is not None :
@@ -104,7 +107,7 @@ class SegFreeListBase :
     radn = self.adns.get(end)                            # coalesced right
     if radn is not None :
       end += self._remove_common(end)
-    self._insert_core(va, sz)
+    self._insert_core(va, sz, front)
     self.acod[va+sz] = va
 
   # Retrieve minimum keyed VA
