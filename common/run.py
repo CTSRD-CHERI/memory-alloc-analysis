@@ -105,7 +105,7 @@ class Run:
             end = begin + int(arg[1])
             prot = int(arg[2])
         elif call == 'munmap':
-            begin = int(arg[1], base=16)
+            begin = int(arg[0], base=16)
             end = begin + int(arg[1])
         elif call == 'revoke':
             begin = [int(b, base=16) for b in arg[0::2]]
@@ -116,11 +116,14 @@ class Run:
 
         #assert begin != 0, 'timestamp={6} call={0} arg1={1} arg2={2} res={3}\tbegin={4} end={5}'.format(call, arg1, arg2, res, begin, end, timestamp)
 
-        if call in ('malloc', 'calloc', 'aligned_alloc', 'posix_memalign'):
+        if call == 'malloc' or \
+           call == 'calloc' or \
+           call == 'aligned_alloc' or \
+           call == 'posix_memalign':
             meth = 'allocd'
             args = (begin, end)
             self.alloc_api_calls += 1
-        elif call in ('realloc', ):
+        elif call == 'realloc':
             if begin_old == 0:
                 meth = 'allocd'
                 args = (begin_new, end_new)
@@ -131,17 +134,17 @@ class Run:
                 meth = 'reallocd'
                 args = (begin_old, begin_new, end_new)
             self.alloc_api_calls += 1
-        elif call in ('free', ):
+        elif call == 'free' :
             meth = 'freed'
             args = (begin, )
             self.alloc_api_calls += 1
-        elif call in ('mmap', ):
+        elif call == 'mmap' :
             meth = 'mapd'
             args = (begin, end, prot)
-        elif call in ('munmap', ):
+        elif call == 'munmap' :
             meth = 'unmapd'
             args = (begin, end)
-        elif call in ('revoke', ):
+        elif call == 'revoke' :
             meth = 'revoked'
             args = tuple(zip(begin, end))
         else:
