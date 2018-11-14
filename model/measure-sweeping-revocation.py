@@ -162,7 +162,7 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
         if not interval_old:
             logger.warning('%d\tW: No existing allocation to realloc at %x, doing just alloc',
                   run.timestamp, begin_old)
-            self.allocd(stk, begin_new, end_new)
+            self.allocd(stk, tid, begin_new, end_new)
             return
         if interval_old.state is not AddrIvalState.ALLOCD:
             logger.warning('%d\tW: Realloc of non-allocated interval %s, assuming it is allocated',
@@ -183,9 +183,9 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
                 self._realloc_stubs.add(ival_old_stub)
         else:
             # XXX use _freed and eliminate spurious W/E reporting
-            self.freed(stk, begin_old)
+            self.freed(stk, tid, begin_old)
 
-        self.allocd(stk, begin_new, end_new)
+        self.allocd(stk, tid, begin_new, end_new)
 
 
     def freed(self, stk, tid, begin):
@@ -311,7 +311,7 @@ class AccountingAllocatedAddrSpaceModel(BaseAddrSpaceModel):
         self.allocd(stk, tid, nbegin, nend)
 
 class AllocatedAddrSpaceModelSubscriber:
-    def reused(self, alloc_state, stk, begin, end):
+    def reused(self, alloc_state, stk, tid, begin, end):
         raise NotImplementedError
 
 
