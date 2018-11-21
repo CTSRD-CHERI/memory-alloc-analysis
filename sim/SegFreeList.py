@@ -34,13 +34,15 @@ class SegFreeListBase :
     self.minv = None
     if extcoal is None :
       self.acod = {}
-      self.remove = self._remove_intcoal
-      self.insert = self._insert_intcoal
+      self.remove  = self._remove_intcoal
+      self.insert  = self._insert_intcoal
+      self.expunge = self._expunge_intcoal
       self.crossreference_asserts = self._crossreference_asserts_intcoal
     else :
       self.acod = extcoal
-      self.remove = self._remove_common
-      self.insert = self._insert_extcoal
+      self.remove  = self._remove_common
+      self.insert  = self._insert_extcoal
+      self.expunge = self._expunge_common
       self.crossreference_asserts = self._crossreference_asserts_extcoal
 
   # Return all segments whose size is either exactly minsz or is greater
@@ -76,6 +78,43 @@ class SegFreeListBase :
     sz = self._remove_common(va)
     del self.acod[va+sz]
     return sz
+
+  # Remove all segments that overlap [vabase:vabase+sz].
+  #
+  # While we might eventually want to support expunging partial segments,
+  # there's no need for it in the upstream allocators, so we don't yet
+  # support it.  We will assert, but not test, so it won't be caught without
+  # paranoia.
+  #
+  def _expunge_common(self, vabase, sz) :
+    rma = []
+    rmn = []
+
+    for va in self.adns.keys() :
+      if not (vabase <= va < vabase + sz) : continue
+
+      (sdn, gdn) = self.adns[va]
+      rmn += [sdn, gdn]
+      rma += [va]
+      if __debug__ :
+        (sva, ssz) = sdn.value
+        assert sva == va
+        assert va + ssz <= vabase + sz, ("Expunge part?", (va, ssz), (vabase, sz))
+
+    for n in rmn : n.list.remove(n)
+    for a in rma : del self.adns[a]
+
+    self.minv = None if {} == self.adns else min(self.adns.keys())
+
+  def _expunge_intcoal(self, vabase, sz) :
+    rmva = []
+    for va in self.acod.keys() :
+      if vabase < va <= vabase + sz :
+        assert vabase <= self.acod[va] < vabase + sz, \
+          ("Expunge splits segment", (self.acod[va], va), (vabase, sz))
+        rmva += [ va ]
+    for va in rmva : del self.acod[va]
+    self._expunge_common(vabase, sz)
 
   def peek(self, va) :
     (sdn, _) = self.adns[va]
