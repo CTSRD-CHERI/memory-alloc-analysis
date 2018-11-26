@@ -356,6 +356,7 @@ class SimpleSweepingRevoker(BaseSweepingRevoker):
             self._sweep(addr_space.sweep_size, intervals)
         for ival in intervals:
             alloc_state.revoked(stk, tid, ival.begin, ival.end)
+        return intervals
 
 
 class CompactingSweepingRevoker(BaseSweepingRevoker):
@@ -387,6 +388,73 @@ class CompactingSweepingRevoker(BaseSweepingRevoker):
             self._sweep(addr_space.sweep_size, olaps_coalesced)
         for ival in olaps_coalesced:
             alloc_state.revoked(stk, tid, ival.begin, ival.end)
+
+        return olaps_coalesced
+
+
+class ColouringRevoker(AllocatedAddrSpaceModelSubscriber):
+    def __init__(self, colour_count, sweeping_revoker):
+        self._sweeping_revoker = sweeping_revoker
+        self._ccount = colour_count
+        self._addr_ivals_c = IntervalMap.from_valued_interval_domain(AddrIval(0, 2**64, 0))
+
+
+    # Look like a sweeping revoker
+    @property
+    def sweeps(self):
+        return self._sweeping_revoker.sweeps
+    @property
+    def swept(self):
+        return self._sweeping_revoker.swept
+    @property
+    def swept_mb(self):
+        return self.swept // 2**20
+    @property
+    def swept_gb(self):
+        return self.swept // 2**30
+    @property
+    def swept_ivals(self):
+        return self._sweeping_revoker.swept_ivals
+
+
+    def reused(self, alloc_state, stk, tid, begin, end):
+        # Query for the FREED intervals in the range (ALLOCD have been scrubbed)
+        ivals_freed = [i for i in alloc_state.addr_ivals_sorted(begin, end) if i.state is AddrIvalState.FREED]
+        ivals_colours = [(max(ic.value for ic in self._addr_ivals_c[i.begin:i.end]) + 1) % self._ccount
+                         for i in ivals_freed]
+
+        # Fall back to the sweeping revoker if any colour wrapped around due to
+        # being maximal.  Reset colours after the sweep.
+        if not all(ivals_colours):
+            if args.exit_on_colour_reuse:
+                logger.critical("%d\tCrit: New allocation %s re-uses %s more than %d times (colours), "
+                            "exiting as instructed by --exit-on-colour-reuse", run.timestamp,
+                            AddrIval(begin, end, AddrIvalState.ALLOCD), ivals_freed, self._ccount)
+                sys.exit(1)
+            ivals_revoked = self._sweeping_revoker.reused(alloc_state, stk, tid, begin, end)
+            self._reset_addr_ivals_colours(ivals_revoked)
+            return ivals_revoked
+
+        # No colour wrapped around, commit the intervals' new colours and
+        # mark the intervals as REVOKED
+        ivals_coloured = [AddrIval(i.begin, i.end, c) for i, c in zip(ivals_freed, ivals_colours)]
+        for ic in ivals_coloured:
+            self._addr_ivals_c.add(ic)
+            alloc_state.revoked(stk, tid, ic.begin, ic.end)
+
+        return ivals_coloured
+
+
+    def _reset_addr_ivals_colours(self, ivals):
+        for i in ivals:
+            self._addr_ivals_c.remove(i)
+
+
+    def revoked(self, stk, tid, *begs_ends):
+        if not isinstance(begs_ends[0], tuple):
+            begs_ends = [(begs_ends[0], begs_ends[1])]
+        self._reset_addr_ivals_colours(AddrIval(b, e, AddrIvalState.REVOKED) for b, e in begs_ends)
+        self._sweeping_revoker.revoked(stk, tid, *begs_ends)
 
 
 class BaseOutput:
@@ -635,13 +703,19 @@ argp = argparse.ArgumentParser(description='Model allocation from a trace and ou
 argp.add_argument("--log-level", help="Set the logging level.  Defaults to CRITICAL",
                   choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
                   default="ERROR")
-argp.add_argument('revoker', nargs='?', default='CompactingSweepingRevoker',
-                  help="Select the revoker type, or 'account' to assume error-free trace and speed up the"
+argp.add_argument('sweeping_revoker', nargs='?', default='CompactingSweepingRevoker',
+                  help="Use the revoker type, or 'account' to assume error-free trace and speed up the"
                   " stats gathering.  Revoker types: NaiveSweepingRevokerN, CompactingSweepingRevokerN,"
                   " where N is the revoker capacity (in # of capabilities, defaults to 1024).")
+argp.add_argument('--colouring-revoker', type=int, metavar='N', help="Use a colouring revoker with N colours.  "
+                  "A colouring revoker delays sweeping revocation until N+1 reuses of a memory address.")
 argp.add_argument("--exit-on-reuse", action="store_true", help="Stop processing and exit with non-zero code "
                   "if the trace contains re-use of freed memory to which there are unrevoked references."
                   "  This option is used to verify that the allocation trace is free of memory reuse.")
+argp.add_argument("--exit-on-colour-reuse", action="store_true", help="Stop processing and exit with non-zero code "
+                  "if the trace contains N+1 reuses of a memory address.  This option is used together with "
+                  "--colouring-revoker N to verify that the allocation trace is free of memory reuse "
+                  "beyond N times.")
 argp.add_argument("--exit-on-unsafe", action="store_true", help="Stop processing and exit with non-zero code "
                   "if the trace contains unsafe allocation behaviour, such as reuse of old allocation stub "
                   "from a shrinking realloc.")
@@ -667,7 +741,7 @@ logging.basicConfig(level=logging.getLevelName(args.log_level), format="%(messag
 logger = logging.getLogger()
 
 # Check command-line arguments
-if args.revoker == "account":
+if args.sweeping_revoker == "account":
     if args.sweep_events_output:
         logger.critical('Crit: Sweep events cannot be output in accounting mode')
         sys.exit(1)
@@ -677,9 +751,12 @@ if args.revoker == "account":
     if args.freed_addr_ivals_histogram_output:
         logger.critical('Crit: FREED intervals histogram cannot be output in accounting mode')
         sys.exit(1)
+if args.exit_on_colour_reuse and not args.colouring_revoker:
+    logger.critical('Crit: --exit-on-colour-reuse must be used with --colouring_revoker N')
+    sys.exit(1)
 
 # Set up the model
-if args.revoker == "account":
+if args.sweeping_revoker == "account":
     alloc_state = AccountingAllocatedAddrSpaceModel()
     addr_space = alloc_state
     alloc_addr_space = addr_space
@@ -688,9 +765,11 @@ else:
     alloc_state = AllocatedAddrSpaceModel()
     addr_space = MappedAddrSpaceModel()
     alloc_addr_space = AllocatorMappedAddrSpaceModel()
-    m = re.search('([a-zA-Z]+)([0-9]+)?', args.revoker)
+    m = re.search('([a-zA-Z]+)([0-9]+)?', args.sweeping_revoker)
     revoker_cls = globals()[m.group(1)]
     revoker = revoker_cls(*(m.group(2),) if m.group(2) is not None else (1024,))
+    if args.colouring_revoker:
+        revoker = ColouringRevoker(args.colouring_revoker, revoker)
     alloc_state.register_subscriber(revoker)
 
 # Set up the input processing
