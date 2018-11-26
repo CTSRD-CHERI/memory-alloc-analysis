@@ -316,7 +316,7 @@ class AllocatedAddrSpaceModelSubscriber:
 
 
 class BaseSweepingRevoker(AllocatedAddrSpaceModelSubscriber):
-    def __init__(self, sweep_capacity_ivals=2**64):
+    def __init__(self, sweep_capacity_ivals):
         super().__init__()
         self.sweeps = 0
         self.swept = 0
@@ -706,7 +706,7 @@ argp.add_argument("--log-level", help="Set the logging level.  Defaults to CRITI
 argp.add_argument('sweeping_revoker', nargs='?', default='CompactingSweepingRevoker',
                   help="Use the revoker type, or 'account' to assume error-free trace and speed up the"
                   " stats gathering.  Revoker types: NaiveSweepingRevokerN, CompactingSweepingRevokerN,"
-                  " where N is the revoker capacity (in # of capabilities, defaults to 1024).")
+                  " where N is the revoker capacity (in # of capabilities, defaults to infinity).")
 argp.add_argument('--colouring-revoker', type=int, metavar='N', help="Use a colouring revoker with N colours.  "
                   "A colouring revoker delays sweeping revocation until N+1 reuses of a memory address.")
 argp.add_argument("--exit-on-reuse", action="store_true", help="Stop processing and exit with non-zero code "
@@ -760,14 +760,14 @@ if args.sweeping_revoker == "account":
     alloc_state = AccountingAllocatedAddrSpaceModel()
     addr_space = alloc_state
     alloc_addr_space = addr_space
-    revoker = BaseSweepingRevoker()
+    revoker = BaseSweepingRevoker(10**20)
 else:
     alloc_state = AllocatedAddrSpaceModel()
     addr_space = MappedAddrSpaceModel()
     alloc_addr_space = AllocatorMappedAddrSpaceModel()
     m = re.search('([a-zA-Z]+)([0-9]+)?', args.sweeping_revoker)
     revoker_cls = globals()[m.group(1)]
-    revoker = revoker_cls(*(m.group(2),) if m.group(2) is not None else (1024,))
+    revoker = revoker_cls(*(m.group(2),) if m.group(2) is not None else (10**20,))
     if args.colouring_revoker:
         revoker = ColouringRevoker(args.colouring_revoker, revoker)
     alloc_state.register_subscriber(revoker)
