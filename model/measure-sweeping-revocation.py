@@ -215,8 +215,8 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
         misrevokes = [[i for i in overlaps if i.state is AddrIvalState.FREED and (i.begin < b or i.end > e)]
                       for (b, e), overlaps in query_and_overlaps]
         if any(misrevokes):
-            query_and_misrevokes = list(zip((AddrIval(b, e, AddrIvalState.REVOKED)
-                                             for (b, e), _ in query_and_overlaps), misrevokes))
+            query_and_misrevokes = [(AddrIval(b, e, AddrIvalState.REVOKED), mis)
+                                    for ((b, e), _), mis in zip(query_and_overlaps, misrevokes) if mis]
             logger.critical('%d\tBug: revoking intervals that do not fully capture the underlying'
                             ' freed allocations %s', run.timestamp, query_and_misrevokes)
             sys.exit(1)
@@ -340,7 +340,7 @@ class BaseSweepingRevoker(AllocatedAddrSpaceModelSubscriber):
         rounds = len(addr_ivals) // self._sweep_capacity_ivals +\
                  (len(addr_ivals) % self._sweep_capacity_ivals != 0)
         if rounds > 1:
-            logger.warning('{0}\tW: Revoker capacity exceeded, doing {1} revocation rounds instead',
+            logger.warning('%d\tW: Revoker capacity exceeded, doing %d revocation rounds instead',
                            run.timestamp, rounds)
 
         self.sweeps += rounds
@@ -710,15 +710,15 @@ argp.add_argument('sweeping_revoker', nargs='?', default='CompactingSweepingRevo
 argp.add_argument('--colouring-revoker', type=int, metavar='N', help="Use a colouring revoker with N colours.  "
                   "A colouring revoker delays sweeping revocation until N+1 reuses of a memory address.")
 argp.add_argument("--exit-on-reuse", action="store_true", help="Stop processing and exit with non-zero code "
-                  "if the trace contains re-use of freed memory to which there are unrevoked references."
-                  "  This option is used to verify that the allocation trace is free of memory reuse.")
+                  "if the trace contains re-use of freed memory to which there may be unrevoked references."
+                  "  This option is used to verify that the allocation trace is free of unsafe memory reuse.")
 argp.add_argument("--exit-on-colour-reuse", action="store_true", help="Stop processing and exit with non-zero code "
-                  "if the trace contains N+1 reuses of a memory address.  This option is used together with "
-                  "--colouring-revoker N to verify that the allocation trace is free of memory reuse "
-                  "beyond N times.")
+                  "if the trace contains N+1 reuses of a memory address to which there may be unrevoked references.  "
+                  "This option is used together with --colouring-revoker N to verify that the allocation trace is free "
+                  "of memory reuse beyond N times.")
 argp.add_argument("--exit-on-unsafe", action="store_true", help="Stop processing and exit with non-zero code "
-                  "if the trace contains unsafe allocation behaviour, such as reuse of old allocation stub "
-                  "from a shrinking realloc.")
+                  "if the trace contains unsafe allocation behaviour that cannot be made safe, such as reuse of "
+                  "old allocation stub from a shrinking realloc.  By default, such events are reported as errors.")
 
 argp.add_argument("--allocation-map-output", help="Output file for the allocation map (disabled by default)")
 argp.add_argument("--sweep-events-output", help="Output file for the sweep-triggering events (disabled by default)")
