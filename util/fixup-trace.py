@@ -237,7 +237,7 @@ class TraceFixups:
 
 
 # Parse command line arguments
-argp = argparse.ArgumentParser(description='Model allocation from a trace and output various measurements')
+argp = argparse.ArgumentParser(description='Sanitise a trace, fixing up inconsistencies.')
 argp.add_argument("--log-level", help="Set the logging level.  Defaults to CRITICAL",
                   choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
                   default="CRITICAL")
