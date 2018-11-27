@@ -139,13 +139,13 @@ class SegFreeListBase :
 
   def _insert_intcoal(self, va, sz, front=False) :
     end = va + sz
+    radn = self.adns.get(end)                            # coalesced right
+    if radn is not None :
+      sz += self._remove_intcoal(end)
     lsva = self.acod.get(va)                             # coalesced left
     if lsva is not None :
       va = lsva
-      self._remove_common(lsva)
-    radn = self.adns.get(end)                            # coalesced right
-    if radn is not None :
-      end += self._remove_common(end)
+      sz += self._remove_intcoal(lsva)
     self._insert_core(va, sz, front)
     self.acod[va+sz] = va
 
@@ -197,7 +197,7 @@ class SegFreeListBase :
       startva = self.acod[endva]
       (sdn, _) = self.adns[startva]
       (_, sz) = sdn.value
-      assert endva == startva + sz, ("End mismatch")
+      assert endva == startva + sz, ("End mismatch", endva, startva, sz)
     return self._crossreference_asserts_common()
 
   def _crossreference_asserts_extcoal(self) :
