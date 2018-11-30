@@ -658,15 +658,19 @@ class RenderedAllocationMapOutput(DirectoryOutput):
         if not addr_ivals:
             return
 
-        now = run.timestamp_ns
-        img = Image.new('RGB', self._geom)
-
-        # Use the first address being tracked
+        # Use the first address being tracked as the base of the image
         baseva = addr_ivals[0].begin
 
         # Just how big is this image, anyway?
         # Assume 16-byte alignment, so one pixel per 16 bytes.
-        topva = baseva + img.width * img.height * 16
+        topva = baseva + self._geom[0] * self._geom[1] * 16
+
+        # OK, now slice, so we don't spend all our time considering things
+        # that are off the map anyway.
+        addr_ivals = alloc_state.addr_ivals_sorted(begin=baseva, end=topva)
+
+        now = run.timestamp_ns
+        img = Image.new('RGB', self._geom)
 
         # Extract Z order from image width
         zo = img.width.bit_length() << 1
