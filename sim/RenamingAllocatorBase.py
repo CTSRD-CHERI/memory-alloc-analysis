@@ -35,9 +35,10 @@ class RenamingAllocatorBase (Publisher):
 
     stk_delegate = stk if stk else 'malloc'
     sz = end - begin
-    eva = self._alloc(stk_delegate, tid, sz)
+    (eva, nsz) = self._alloc(stk_delegate, tid, sz)
+    assert nsz >= sz
     self._tva2eva[begin] = eva
-    self._publish('allocd', stk, tid, eva, eva+sz)
+    self._publish('allocd', stk, tid, eva, eva+nsz)
 
   # Publish then free, so that effects (e.g. unmap) occur in the right order!
   def freed(self, stk, tid, begin):
@@ -58,14 +59,14 @@ class RenamingAllocatorBase (Publisher):
         return self._publish('reallocd', stk, tid, evao, evao, evao+szn)
 
       # otherwise, alloc new thing, free old thing
-      evan = self._alloc(stk_delegate, tid, szn)
+      (evan, sznn) = self._alloc(stk_delegate, tid, szn)
       self._free(stk_delegate, tid, evao)
 
       # Update TVA map; delete old then add new in case of equality
       del self._tva2eva[begin_old]
       self._tva2eva[begin_new] = evan
 
-      self._publish('reallocd', stk, tid, evao, evan, evan+szn)
+      self._publish('reallocd', stk, tid, evao, evan, evan+sznn)
     else :
       # We don't seem to have that address on file; allocate it
       # (This should include NULL, yeah?)

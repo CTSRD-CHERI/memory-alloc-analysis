@@ -529,15 +529,15 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
       # Is small allocation
 
       # Is bump bucket available?
-      fsz = self._szfix(sz)
-      bbs = self._szbix2ap.get(fsz, {})
+      nsz = self._szfix(sz)
+      bbs = self._szbix2ap.get(nsz, {})
 
       bbix = self._alloc_place_small(stk, sz, iter(bbs.keys()), tidys)
       if bbix not in bbs :
         self._publish('mapd', stk, tid, self._bix2va(bbix), self._bix2va(bbix+1), 0b11)
         self._mark_allocated(bbix, 1, BuckSt.BUMP)
-        self._bix2szbm[bbix] = (fsz, 0)
-        if fsz not in self._szbix2ap : self._szbix2ap[fsz] = {}
+        self._bix2szbm[bbix] = (nsz, 0)
+        if nsz not in self._szbix2ap : self._szbix2ap[nsz] = {}
         bbap = 0
       else :
         bbap = bbs[bbix]
@@ -545,24 +545,24 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
       if __debug__:
         # Some sanity-checking doesn't hurt, either.
         (bbsz, bbbm) = self._bix2szbm[bbix]
-        assert bbsz == fsz, "Incorrect indexing of BUMP buckets"
+        assert bbsz == nsz, "Incorrect indexing of BUMP buckets"
         assert bbbm & (1 << bbap) == 0, "Attempting to BUMP into free object"
 
       bbap += 1
-      if bbap == self._maxoix(fsz) :
+      if bbap == self._maxoix(nsz) :
         # out of room; can't bump this any more
-        del self._szbix2ap[fsz][bbix]
+        del self._szbix2ap[nsz][bbix]
         self._bix2state.mark(bbix, 1, BuckSt.WAIT)
 
         # Inform the placement policy that this one is no-go and won't be
         # coming back, so it can stop tracking metadata about it.
         self._alloc_place_small_full(bbix)
       else :
-        assert bbap < self._maxoix(fsz), "Allocation pointer beyond maximum"
+        assert bbap < self._maxoix(nsz), "Allocation pointer beyond maximum"
         # just revise allocation pointer
-        self._szbix2ap[fsz][bbix] = bbap
+        self._szbix2ap[nsz][bbix] = bbap
 
-      res = self._bix2va(bbix) + (bbap-1)*fsz
+      res = self._bix2va(bbix) + (bbap-1)*nsz
     else :
       # Large allocation.
 
@@ -580,9 +580,11 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
       res = self._bix2va(bbix)
       self._publish('mapd', stk, tid, res, res + self._nbucks2sz(bsz), 0b11)
 
+      nsz = self._nbucks2sz(bsz)
+
     self._maybe_revoke()
     if __debug__ : logging.debug("<_alloc eva=%x", res)
-    return res
+    return (res, nsz)
 
 # --------------------------------------------------------------------- }}}
 # Free ---------------------------------------------------------------- {{{

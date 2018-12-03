@@ -453,7 +453,7 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
     self._ensure_mapped(stk,tid,loc,sz)
     self._mark_allocated(loc,sz)
     self._eva2sz[loc] = sz
-    return loc
+    return (loc, sz)
 
 # --------------------------------------------------------------------- }}}
 # Free ---------------------------------------------------------------- {{{
