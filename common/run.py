@@ -184,7 +184,7 @@ class Unrun:
     def unmapd(self, publ, stk, tid, begin, end):
         print("%d\t%s\t%s\tmunmap\t%x %d\t" % (self._tslam(), stk, tid, begin, end - begin))
 
-    def revoked(self, publ, stk, tid, spans):
+    def revoked(self, publ, stk, tid, *spans):
         print("%d\t%s\t%s\trevoke\t%s\t" % (self._tslam(), stk, tid,
             " ".join(["%x %x" % be for be in spans])))
 
