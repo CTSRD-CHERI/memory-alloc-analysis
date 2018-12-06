@@ -418,31 +418,33 @@ class ColouringRevoker(AllocatedAddrSpaceModelSubscriber):
 
 
     def reused(self, alloc_state, stk, tid, begin, end):
-        # Query for the FREED intervals in the range (ALLOCD have been scrubbed)
-        ivals_freed = [i for i in alloc_state.addr_ivals_sorted(begin, end) if i.state is AddrIvalState.FREED]
-        ivals_colours = [(max(ic.value for ic in self._addr_ivals_c[i.begin:i.end]) + 1) % self._ccount
-                         for i in ivals_freed]
+        # Query for colour intervals in the range.
+        # Trim result so that no colour interval expands beyond the range being reused.
+        # Calculate the range's new colour.
+        overlaps_c = self._addr_ivals_c[begin:end]
+        if overlaps_c[0].begin < begin:
+            overlaps_c[0] = AddrIval(begin, overlaps_c[0].end, overlaps_c[0].value)
+        if overlaps_c[-1].end > end:
+            overlaps_c[-1] = AddrIval(overlaps_c[-1].begin, end, overlaps_c[-1].value)
+        ival_colour = (max(ic.value for ic in overlaps_c) + 1) % self._ccount
 
         # Fall back to the sweeping revoker if any colour wrapped around due to
-        # being maximal.  Reset colours after the sweep.
-        if not all(ivals_colours):
+        # being maximal.
+        # Reset colours after the sweep.
+        if ival_colour == 0:
             if args.exit_on_colour_reuse:
+                ivals_max_colour = [i for i in overlaps_c if i.value == self._ccount-1]
                 logger.critical("%d\tCrit: New allocation %s re-uses %s more than %d times (colours), "
                             "exiting as instructed by --exit-on-colour-reuse", run.timestamp,
-                            AddrIval(begin, end, AddrIvalState.ALLOCD), ivals_freed, self._ccount)
+                            AddrIval(begin, end, AddrIvalState.ALLOCD), ivals_max_colour, self._ccount)
                 sys.exit(1)
             ivals_revoked = self._sweeping_revoker.reused(alloc_state, stk, tid, begin, end)
             self._reset_addr_ivals_colours(ivals_revoked)
             return ivals_revoked
 
-        # No colour wrapped around, commit the intervals' new colours and
-        # mark the intervals as REVOKED
-        ivals_coloured = [AddrIval(i.begin, i.end, c) for i, c in zip(ivals_freed, ivals_colours)]
-        for ic in ivals_coloured:
-            self._addr_ivals_c.add(ic)
-            alloc_state.revoked(stk, tid, ic.begin, ic.end)
-
-        return ivals_coloured
+        # No colour wrapped around, commit the interval's new colour.
+        self._addr_ivals_c.add(AddrIval(begin, end, ival_colour))
+        return []
 
 
     def _reset_addr_ivals_colours(self, ivals):
