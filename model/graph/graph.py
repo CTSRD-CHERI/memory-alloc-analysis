@@ -14,16 +14,8 @@ y1, y2, y3, y4, y5, y6, y7 = 1, 2, 3, 4, 5, 6, 7
 data0[x] -= data0[x][0]    # offset time from the start
 time_s = data0[x] / 10**9 # time ns to s
 
-data0[y1] //= 2**20        # aspace-total b to mb
-data0[y2] //= 2**20        # aspace-sweep b to mb
-data0[y3] //= 2**20        # aspace-allocator b to mb
-data0[y4] //= 2**20        # allocd b to mb
-
-data0[y5] //= 1000         # sweeps units to thousands
-data0[y6] //= 2**30        # swept b to gb
-data0[y7] //= 1000         # sweep ivals units to thousands
-
 #print(data0)
+
 
 def cum_time_window(vals, time, win_size):
     vals_ret = []
@@ -36,46 +28,87 @@ def cum_time_window(vals, time, win_size):
         time_ret.append(t - time[win_start_i])
     return np.array(vals_ret), np.array(time_ret)
 
+
+def prefix_units(values, prefix_radix:str):
+    assert prefix_radix in ('decimal', 'binary')
+
+    base = 10 if prefix_radix == 'decimal' else 2
+    magnitudes = tuple(range(0, 12 + 1, 3)) if prefix_radix == 'decimal' else\
+                 tuple(range(0, 40 + 1, 10))
+    prefixes = ('', 'K', 'M', 'G', 'T') if prefix_radix == 'decimal' else\
+               ('', 'Ki', 'Mi', 'Gi', 'Ti')
+    denominators = [base**mag for mag in magnitudes]
+    prefix_to_denominator = dict(zip(prefixes, denominators))
+
+    # Lower first threshold from 1 to 0 to weigh in fractional values.
+    # Note that null values are excluded as they may have any prefix.
+    thresholds = list(denominators)
+    thresholds[0] = 0
+    threshold_to_prefix = dict(zip(thresholds, prefixes))
+    vals_for_histogram = [v for v in values if v > 0]
+
+    freqs, edges = np.histogram(vals_for_histogram, bins=thresholds)
+    # most common threshold
+    mct = max(zip(freqs, edges), key=(lambda fe_pair: fe_pair[0]))[1]
+    prefix = threshold_to_prefix[mct]
+    denominator = prefix_to_denominator[prefix]
+    #print("Most common threshold: ", mct)
+    #print("Most common prefix: ", threshold_to_prefix[mct])
+
+    return prefix, denominator
+
+
 matplotlib.rc('font', size=11)
 #fig, ax = plt.subplots()
 plt.subplot(4, 1, 1)
 plt.subplots_adjust(hspace=1)
 
+aspace_total_prefix, aspace_total_denominator = prefix_units(data0[y1], 'binary')
+data0[y1] //= aspace_total_denominator        # aspace-total
+data0[y2] //= aspace_total_denominator        # aspace-sweep
+data0[y3] //= aspace_total_denominator        # aspace-allocator
+data0[y4] //= aspace_total_denominator        # allocd
 plt.plot(time_s, data0[y1], time_s, data0[y2], time_s, data0[y3], time_s, data0[y4])
 plt.title('Address space usage over time\n(data-set "{0}")'.format(data0_label))
 plt.legend(['Aspace total', 'Aspace to sweep', 'Aspace of allocator', 'Allocd by allocator'],
            loc='lower right', bbox_to_anchor=[1, 1])
 plt.xlabel('Time (s)')
-plt.ylabel('Amount (mb)')
+plt.ylabel('Amount ({0}B)'.format(aspace_total_prefix))
 
 plt.subplot(4, 1, 2)
 sweep_1s, time_ns_windows = cum_time_window(data0[y6], data0[x], 10**9)
 time_s_windows = np.array([1 if tw < 10**9 else tw / 10**9 for tw in time_ns_windows])
 sweep_per_s = sweep_1s / time_s_windows
+sweep_per_s_prefix, sweep_per_s_denominator = prefix_units(sweep_per_s, 'binary')
+sweep_per_s //= sweep_per_s_denominator
 #print(sweep_per_s)
 plt.plot(time_s, sweep_per_s, color='blue')
-plt.title('Sweeping amount requirement over time\nmax={0}gb/s   avg={1}gb/s'
-          .format(int(max(sweep_per_s)), int(np.average(sweep_per_s))))
+plt.title('Sweeping amount requirement over time\nmax={0}{2}B/s   avg={1}{2}B/s'
+          .format(int(max(sweep_per_s)), int(np.average(sweep_per_s)), sweep_per_s_prefix))
 plt.xlabel('Time (s)')
-plt.ylabel('Amount (gb/s)')
+plt.ylabel('Amount ({0}B/s)'.format(sweep_per_s_prefix))
 
 plt.subplot(4, 1, 3)
 sweeps_1s, _ = cum_time_window(data0[y5], data0[x], 10**9)
 sweeps_per_s = sweeps_1s / time_s_windows
+sweeps_per_s_prefix, sweeps_per_s_denominator = prefix_units(sweeps_per_s, 'decimal')
+sweeps_per_s //= sweeps_per_s_denominator
 plt.plot(time_s, sweeps_per_s, color='red')
-plt.title('Sweeps required over time\nmax={0}k/s   avg={1}k/s'
-          .format(int(max(sweeps_per_s)), int(np.average(sweeps_per_s))))
+plt.title('Sweeps required over time\nmax={0}{2}/s   avg={1}{2}/s'
+          .format(int(max(sweeps_per_s)), int(np.average(sweeps_per_s)), sweeps_per_s_prefix))
 plt.xlabel('Time (s)')
-plt.ylabel('Amount (thousands)', color='red')
+plt.ylabel('Sweeps {0}'.format(('('+sweeps_per_s_prefix+')') if sweeps_per_s_prefix else ''), color='red')
 
 plt.subplot(4, 1, 4)
 sweeps_ivals_1s, _ = cum_time_window(data0[y7], data0[x], 10**9)
 sweeps_ivals_per_s = sweeps_ivals_1s / time_s_windows
+sweeps_ivals_per_s_prefix, sweeps_ivals_per_s_denominator = prefix_units(sweeps_ivals_per_s, 'decimal')
+sweeps_ivals_per_s //= sweeps_ivals_per_s_denominator
 plt.plot(time_s, sweeps_ivals_per_s, color='blue')
-plt.title('Sweep intervals required over time\nmax={0}k/s   avg={1}k/s'
-          .format(int(max(sweeps_ivals_per_s)), int(np.average(sweeps_ivals_per_s))))
+plt.title('Sweep intervals required over time\nmax={0}{2}/s   avg={1}{2}/s'
+          .format(int(max(sweeps_ivals_per_s)), int(np.average(sweeps_ivals_per_s)), sweeps_ivals_per_s_prefix))
 plt.xlabel('Time (s)')
-plt.ylabel('Amount (thousands)', color='blue')
+plt.ylabel('Amount {0}'.format(('('+sweeps_ivals_per_s_prefix+')') if sweeps_ivals_per_s_prefix else ''), color='blue')
 plt.savefig('{0}-aspace_stats.eps'.format(data0_label.lower()))
 
 plt.show()
