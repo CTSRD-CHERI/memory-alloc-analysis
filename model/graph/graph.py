@@ -34,10 +34,10 @@ def prefix_units(values, prefix_radix:str):
     assert prefix_radix in ('decimal', 'binary')
 
     base = 10 if prefix_radix == 'decimal' else 2
-    magnitudes = tuple(range(0, 12 + 1, 3)) if prefix_radix == 'decimal' else\
-                 tuple(range(0, 40 + 1, 10))
-    prefixes = ('', 'K', 'M', 'G', 'T') if prefix_radix == 'decimal' else\
-               ('', 'Ki', 'Mi', 'Gi', 'Ti')
+    magnitudes = tuple(range(0, 18 + 1, 3)) if prefix_radix == 'decimal' else\
+                 tuple(range(0, 60 + 1, 10))
+    prefixes = ('', 'K', 'M', 'G', 'T', 'P', 'E') if prefix_radix == 'decimal' else\
+               ('', 'Ki', 'Mi', 'Gi', 'Ti', 'Pi', 'Ei')
     denominators = [base**mag for mag in magnitudes]
     prefix_to_denominator = dict(zip(prefixes, denominators))
 
