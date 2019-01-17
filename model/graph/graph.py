@@ -2,6 +2,7 @@
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
+import math
 from data import *
 
 import sys
@@ -57,6 +58,15 @@ def prefix_units(values, prefix_radix:str):
 
     return prefix, denominator
 
+def readable_float(x):
+    assert x > 0
+    frac, integ = math.modf(x)
+    if integ >= 100:
+        return '{0:.0f}'.format(x)
+    if integ >= 1:
+        return '{0:.1f}'.format(x)
+    return '{0:.2f}'.format(x)
+
 
 matplotlib.rc('font', size=11)
 #fig, ax = plt.subplots()
@@ -64,11 +74,12 @@ plt.subplot(4, 1, 1)
 plt.subplots_adjust(hspace=1)
 
 aspace_total_prefix, aspace_total_denominator = prefix_units(data0[y1], 'binary')
-data0[y1] //= aspace_total_denominator        # aspace-total
-data0[y2] //= aspace_total_denominator        # aspace-sweep
-data0[y3] //= aspace_total_denominator        # aspace-allocator
-data0[y4] //= aspace_total_denominator        # allocd
-plt.plot(time_s, data0[y1], time_s, data0[y2], time_s, data0[y3], time_s, data0[y4])
+aspace_total = data0[y1] / aspace_total_denominator        # aspace-total
+aspace_sweep = data0[y2] / aspace_total_denominator        # aspace-sweep
+aspace_allocator = data0[y3] / aspace_total_denominator    # aspace-allocator
+allocator_allocd = data0[y4] / aspace_total_denominator    # allocd
+plt.plot(time_s, aspace_total, time_s, aspace_sweep, time_s, aspace_allocator,
+         time_s, allocator_allocd)
 plt.title('Address space usage over time\n(data-set "{0}")'.format(data0_label))
 plt.legend(['Aspace total', 'Aspace to sweep', 'Aspace of allocator', 'Allocd by allocator'],
            loc='lower right', bbox_to_anchor=[1, 1])
@@ -80,11 +91,12 @@ sweep_1s, time_ns_windows = cum_time_window(data0[y6], data0[x], 10**9)
 time_s_windows = np.array([1 if tw < 10**9 else tw / 10**9 for tw in time_ns_windows])
 sweep_per_s = sweep_1s / time_s_windows
 sweep_per_s_prefix, sweep_per_s_denominator = prefix_units(sweep_per_s, 'binary')
-sweep_per_s //= sweep_per_s_denominator
+sweep_per_s /= sweep_per_s_denominator
 #print(sweep_per_s)
 plt.plot(time_s, sweep_per_s, color='blue')
 plt.title('Sweeping amount requirement over time\nmax={0}{2}B/s   avg={1}{2}B/s'
-          .format(int(max(sweep_per_s)), int(np.average(sweep_per_s)), sweep_per_s_prefix))
+          .format(readable_float(max(sweep_per_s)),
+                  readable_float(np.average(sweep_per_s)), sweep_per_s_prefix))
 plt.xlabel('Time (s)')
 plt.ylabel('Amount ({0}B/s)'.format(sweep_per_s_prefix))
 
@@ -92,10 +104,11 @@ plt.subplot(4, 1, 3)
 sweeps_1s, _ = cum_time_window(data0[y5], data0[x], 10**9)
 sweeps_per_s = sweeps_1s / time_s_windows
 sweeps_per_s_prefix, sweeps_per_s_denominator = prefix_units(sweeps_per_s, 'decimal')
-sweeps_per_s //= sweeps_per_s_denominator
+sweeps_per_s /= sweeps_per_s_denominator
 plt.plot(time_s, sweeps_per_s, color='red')
 plt.title('Sweeps required over time\nmax={0}{2}/s   avg={1}{2}/s'
-          .format(int(max(sweeps_per_s)), int(np.average(sweeps_per_s)), sweeps_per_s_prefix))
+          .format(readable_float(max(sweeps_per_s)),
+                  readable_float(np.average(sweeps_per_s)), sweeps_per_s_prefix))
 plt.xlabel('Time (s)')
 plt.ylabel('Sweeps {0}'.format(('('+sweeps_per_s_prefix+')') if sweeps_per_s_prefix else ''), color='red')
 
@@ -103,10 +116,11 @@ plt.subplot(4, 1, 4)
 sweeps_ivals_1s, _ = cum_time_window(data0[y7], data0[x], 10**9)
 sweeps_ivals_per_s = sweeps_ivals_1s / time_s_windows
 sweeps_ivals_per_s_prefix, sweeps_ivals_per_s_denominator = prefix_units(sweeps_ivals_per_s, 'decimal')
-sweeps_ivals_per_s //= sweeps_ivals_per_s_denominator
+sweeps_ivals_per_s /= sweeps_ivals_per_s_denominator
 plt.plot(time_s, sweeps_ivals_per_s, color='blue')
 plt.title('Sweep intervals required over time\nmax={0}{2}/s   avg={1}{2}/s'
-          .format(int(max(sweeps_ivals_per_s)), int(np.average(sweeps_ivals_per_s)), sweeps_ivals_per_s_prefix))
+          .format(readable_float(max(sweeps_ivals_per_s)),
+                  readable_float(np.average(sweeps_ivals_per_s)), sweeps_ivals_per_s_prefix))
 plt.xlabel('Time (s)')
 plt.ylabel('Amount {0}'.format(('('+sweeps_ivals_per_s_prefix+')') if sweeps_ivals_per_s_prefix else ''), color='blue')
 plt.savefig('{0}-aspace_stats.eps'.format(data0_label.lower()))
