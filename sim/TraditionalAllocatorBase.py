@@ -469,7 +469,6 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
       self._publish('unmapd', stk, tid, self._evp2eva(qb), self._evp2eva(qb + qsz))
     self._evp2pst.mark(pbase, plim-pbase, PageSt.UMAP)
 
-
   def _free(self, stk, tid, loc):
     if self._paranoia > PARANOIA_STATE_PER_OPER : self._state_asserts()
     assert self._eva2sst[loc][2] == SegSt.WAIT, "free non-WAIT?"
@@ -496,8 +495,6 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
     # XXX configurable policy
     if qsz > (16 * 2**self._pagelog) :
       self._ensure_unmapped(stk, tid, qb, qsz)
-
-    self._maybe_revoke()
 
   def _free_unsafe(self, stk, tid, loc):
     if self._paranoia > PARANOIA_STATE_PER_OPER : self._state_asserts()

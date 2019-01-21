@@ -582,7 +582,6 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
 
       nsz = self._nbucks2sz(bsz)
 
-    self._maybe_revoke()
     if __debug__ : logging.debug("<_alloc eva=%x", res)
     return (res, nsz)
 
@@ -685,7 +684,6 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
         # page-at-a-time release.
         self._publish('unmapd', stk, tid, self._bix2va(bix), self._bix2va(bix+1))
 
-        self._maybe_revoke()
       else :
         # Just update
         self._bix2szbm[bix] = (sz, bbm)
@@ -701,7 +699,6 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
 
       self._free_bix(bix, bsz)
       self._publish('unmapd', stk, tid, self._bix2va(bix), self._bix2va(bix+bsz))
-      self._maybe_revoke()
     if __debug__ : logging.debug("<_free eva=%x", eva)
 
 # --------------------------------------------------------------------- }}}

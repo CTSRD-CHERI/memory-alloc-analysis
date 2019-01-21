@@ -8,13 +8,14 @@
 #  _alloc(stk, tid, size) -> eva
 #  _free(stk, tid, eva) -> None
 #  _try_realloc(stk, eva, nsz) -> Bool
+#  _maybe_revoke() -> None
 #
 # Children should publish their own version of events that this module
 # swallows, specifically:
 #
-#   mapd
-#   unmapd
-#   revoked
+#   mapd        in _alloc, _try_realloc
+#   unmapd      in _free, _try_realloc
+#   revoked     in _maybe_revoke
 #
 # Children should not publish allocd, freed, reallocd, or size_measured
 # events, leaving that to this class.  size_measured is passed through
@@ -39,6 +40,7 @@ class RenamingAllocatorBase (Publisher):
     assert nsz >= sz
     self._tva2eva[begin] = eva
     self._publish('allocd', stk, tid, eva, eva+nsz)
+    self._maybe_revoke()
 
   # Publish then free, so that effects (e.g. unmap) occur in the right order!
   def freed(self, stk, tid, begin):
@@ -47,6 +49,7 @@ class RenamingAllocatorBase (Publisher):
     if eva is not None :
       self._publish('freed', stk, tid, eva)
       self._free(stk_delegate, tid, eva)
+      self._maybe_revoke()
       del self._tva2eva[begin]
 
   def reallocd(self, stk, tid, begin_old, begin_new, end_new):
@@ -71,6 +74,7 @@ class RenamingAllocatorBase (Publisher):
       # We don't seem to have that address on file; allocate it
       # (This should include NULL, yeah?)
       self.allocd(stk, tid, begin_new, end_new)
+    self._maybe_revoke()
 
   # Pass through
   def size_measured(self, sz):
