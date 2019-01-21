@@ -57,8 +57,10 @@ class MetadataTracker() :
         oid = self._allocd(stk, tid, begin, end-begin, now)
         self._oid2rmd[oid]   = None
 
-    def freed(self, _, tid, begin) :
+    def freed(self, stk, tid, begin) :
         now = self._tslam()
+
+        self._istk(stk)
 
         oid = self._tva2oid.pop(begin, None)
         if oid is None :
