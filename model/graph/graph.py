@@ -59,7 +59,7 @@ def prefix_units(values, prefix_radix:str):
     return prefix, denominator
 
 def readable_float(x):
-    assert x > 0
+    assert x >= 0, x
     frac, integ = math.modf(x)
     if integ >= 100:
         return '{0:.0f}'.format(x)
