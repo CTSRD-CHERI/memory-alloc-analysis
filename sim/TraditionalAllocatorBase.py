@@ -331,7 +331,7 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
         self._junklru.remove(self._junkadn.pop(qb))
         self._mark_tidy(qb, qsz)
 
-   self._publish('revoked', "---", "", [(loc, loc+sz) for (_, loc, sz) in ss])
+   self._publish('revoked', "---", "", *((loc, loc+sz) for (_, loc, sz) in ss))
 
   def _do_revoke_best_and(self, n=None, revoke=[]) :
 

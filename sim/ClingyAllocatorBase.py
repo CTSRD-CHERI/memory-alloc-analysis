@@ -371,7 +371,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
       self._mark_tidy(bix, sz, nj)
 
    self._publish('revoked', "---", "",
-      [(self._bix2va(bix), self._bix2va(bix+sz)) for (_, bix, sz) in ss])
+      *((self._bix2va(bix), self._bix2va(bix+sz)) for (_, bix, sz) in ss))
 
 
   # Conditionally revokes the top n segments if the predicate, which is
