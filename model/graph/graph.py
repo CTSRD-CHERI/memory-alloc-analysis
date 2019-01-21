@@ -10,10 +10,14 @@ import sys
 data0 = np.array(data0)
 data0 = np.rot90(np.fliplr(data0))
 x = 0
-y1, y2, y3, y4, y5, y6, y7 = 1, 2, 3, 4, 5, 6, 7
+y1, y2, y3, y4, y5, y6, y7, y8 = 1, 2, 3, 4, 5, 6, 7, 8
 
-data0[x] -= data0[x][0]    # offset time from the start
-time_s = data0[x] / 10**9 # time ns to s
+sweeps_dist = data0[y8]
+data0 = np.array(np.delete(data0, y8, 0), dtype='i8')
+
+time_s = data0[x]
+time_s -= time_s[0]       # offset time from the start
+time_s = time_s / 10**9 # time ns to s
 
 #print(data0)
 
@@ -113,16 +117,19 @@ plt.xlabel('Time (s)')
 plt.ylabel('Sweeps {0}'.format(('('+sweeps_per_s_prefix+')') if sweeps_per_s_prefix else ''), color='red')
 
 plt.subplot(4, 1, 4)
-sweeps_ivals_1s, _ = cum_time_window(data0[y7], data0[x], 10**9)
-sweeps_ivals_per_s = sweeps_ivals_1s / time_s_windows
-sweeps_ivals_per_s_prefix, sweeps_ivals_per_s_denominator = prefix_units(sweeps_ivals_per_s, 'decimal')
-sweeps_ivals_per_s /= sweeps_ivals_per_s_denominator
-plt.plot(time_s, sweeps_ivals_per_s, color='blue')
-plt.title('Sweep intervals required over time\nmax={0}{2}/s   avg={1}{2}/s'
-          .format(readable_float(max(sweeps_ivals_per_s)),
-                  readable_float(np.average(sweeps_ivals_per_s)), sweeps_ivals_per_s_prefix))
-plt.xlabel('Time (s)')
-plt.ylabel('Amount {0}'.format(('('+sweeps_ivals_per_s_prefix+')') if sweeps_ivals_per_s_prefix else ''), color='blue')
-plt.savefig('{0}-aspace_stats.eps'.format(data0_label.lower()))
+sweeps_dist = [int(x) for x in sweeps_dist[-1].split(' ')]
+sweeps_dist = np.array(sweeps_dist[:[i for i in range(len(sweeps_dist) + 1)
+                                   if all(not x for x in sweeps_dist[i:])][0]])
+sweeps_cumdist = np.cumsum(sweeps_dist)
+sweeps_dist_xticks = [e for e in range(len(sweeps_dist))]
+plt.bar(sweeps_dist_xticks, sweeps_dist / sum(sweeps_dist) * 100.0, width=.5, color='blue')
+plt.xlabel('# of revoked intervals (log2)')
+plt.ylabel('Sweeps (%)', color='blue')
+plt.twinx()
+plt.plot(sweeps_dist_xticks, sweeps_cumdist / sum(sweeps_dist) * 100.0, color='red')
+plt.xticks(sweeps_dist_xticks)
+plt.ylabel('Sweeps (%)', color='red')
+plt.title('Histogram of sweeps\' # of revoked intervals')
 
+plt.savefig('{0}-aspace_stats.eps'.format(data0_label.lower()))
 plt.show()

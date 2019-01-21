@@ -37,6 +37,7 @@ import numpy
 import re
 import sys
 import os
+from sortedcontainers import SortedDict
 
 if __name__ == "__main__" and __package__ is None:
     sys.path.append(os.path.dirname(sys.path[0]))
@@ -319,6 +320,7 @@ class BaseSweepingRevoker(AllocatedAddrSpaceModelSubscriber):
         self.sweeps = 0
         self.swept = 0
         self.swept_ivals = 0
+        self.sweeps_dist = SortedDict(zip((2**e for e in range(20)), (0 for _ in range(20))))
         self._sweep_capacity_ivals = int(sweep_capacity_ivals)
 
     @property
@@ -344,6 +346,10 @@ class BaseSweepingRevoker(AllocatedAddrSpaceModelSubscriber):
         self.sweeps += rounds
         self.swept += amount * rounds
         self.swept_ivals += len(addr_ivals)
+        sd = self.sweeps_dist
+        sd[sd.iloc[sd.bisect_right(len(addr_ivals) % self._sweep_capacity_ivals) - 1]] += 1
+        if rounds > 1:
+            sd[sd.iloc[sd.bisect_right(self._sweep_capacity_ivals) - 1]] += rounds - 1
         output.update()
 
 
@@ -518,15 +524,17 @@ class GraphOutput(FileOutput):
         self._output_header()
 
     def _output_header(self):
-        print('#{0}\t{1}\t{2}\t{3}\t{4}\t{5}\t{6}\t{7}'.format('timestamp-unix-ns', 'addr-space-total-b',
+        print('#{0}\t{1}\t{2}\t{3}\t{4}\t{5}\t{6}\t{7}\t{8}'.format('timestamp-unix-ns', 'addr-space-total-b',
               'addr-space-sweep-b', 'allocator-mapped-b', 'allocator-allocd-b', 'sweeps', 'swept-b',
-              'swept-intervals'), file=self._file)
+              'swept-intervals', 'sweeps-distributed-over-swept-intervals-powers-of-two'),
+              file=self._file)
 
     @BaseOutput.rate_limited_runms(100)
     def update(self):
-        print('{0}\t{1}\t{2}\t{3}\t{4}\t{5}\t{6}\t{7}'.format(run.timestamp, addr_space.size,
+        print('{0}\t{1}\t{2}\t{3}\t{4}\t{5}\t{6}\t{7}\t{8}'.format(run.timestamp, addr_space.size,
               addr_space.sweep_size, alloc_addr_space.mapd_size, alloc_state.allocd_size, revoker.sweeps,
-              revoker.swept, revoker.swept_ivals), file=self._file)
+              revoker.swept, revoker.swept_ivals, ' '.join(str(v) for v in revoker.sweeps_dist.values())),
+              file=self._file)
 
 
 class AllocationMapOutput(FileOutput, AllocatedAddrSpaceModelSubscriber):
