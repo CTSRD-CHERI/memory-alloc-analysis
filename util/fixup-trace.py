@@ -150,11 +150,11 @@ class TraceFixups:
         self._addr_ivals = \
             IntervalMap.from_valued_interval_domain(bkg_ival, coalescing=False)
 
-    def allocd(self, stk, tid, begin, end):
-        self._allocd(begin, end)
-        trace.allocd(None, stk, tid, begin, end)
+    def allocd(self, event, begin, end):
+        self._allocd(event, begin, end)
+        trace.allocd(None, event, begin, end)
 
-    def _allocd(self, begin, end, *, caller='alloc'):
+    def _allocd(self, event, begin, end, *, caller='alloc'):
         ival = AddrIval(begin, end, ALLOCD)
         overlaps = self._addr_ivals[begin:end]
         overlaps_allocd = [o for o in overlaps if o.state is ALLOCD]
@@ -162,14 +162,14 @@ class TraceFixups:
             for o in overlaps_allocd:
                 inew = AddrIval(o.begin, o.end, FREED)
                 self._addr_ivals.add(inew)
-                trace.freed(None, '', '', inew.begin)
+                trace.freed(None, event, inew.begin)
             logger.info('%d\tI: inserted %d frees before overlapping %s %s',
                         run.timestamp_ns, len(overlaps_allocd), caller, ival)
 
         self._addr_ivals.add(ival)
 
 
-    def freed(self, stk, tid, begin):
+    def freed(self, event, begin):
         overlap = self._addr_ivals[begin]
         if overlap.state in (None, FREED):
             logger.info('%d\tI: dropped unmatched free(%x)',
@@ -178,56 +178,56 @@ class TraceFixups:
 
         ival = AddrIval(begin, overlap.end, FREED)
         if overlap.state is ALLOCD and ival.begin != overlap.begin:
-            inew_allocd = self._shrink_allocd(overlap, ival.begin)
+            inew_allocd = self._shrink_allocd(event, overlap, ival.begin)
             logger.info('%d\tI: replaced mis-free(%x) with free+alloc %s',
                         run.timestamp_ns, begin, inew_allocd)
             return
 
         self._addr_ivals.add(ival)
-        trace.freed(None, stk, tid, ival.begin)
+        trace.freed(None, event, ival.begin)
 
 
-    def reallocd(self, stk, tid, begin, begin_new, end_new):
+    def reallocd(self, event, begin, begin_new, end_new):
         overlap = self._addr_ivals[begin]
         end = overlap.end if overlap.state is not None else min(overlap.end, begin + 4)
         ival_freed = AddrIval(begin, end, FREED)
         if overlap.state in (None, FREED):
             inew_alloc = AddrIval(begin_new, end_new, ALLOCD)
-            self.allocd(stk, tid, inew_alloc.begin, inew_alloc.end)
+            self.allocd(event, inew_alloc.begin, inew_alloc.end)
             logger.info('%d\tI: replaced unmatched realloc(%x, %d) with alloc(%d)',
                         run.timestamp_ns, begin, inew_alloc.size, inew_alloc.size)
             return
         if overlap.state is ALLOCD and ival_freed.begin != overlap.begin:
             inew_alloc = AddrIval(begin_new, end_new, ALLOCD)
-            inew_allocd = self._shrink_allocd(overlap, ival_freed.begin)
-            self.allocd(stk, tid, inew_alloc.begin, inew_alloc.end)
+            inew_allocd = self._shrink_allocd(event, overlap, ival_freed.begin)
+            self.allocd(event, inew_alloc.begin, inew_alloc.end)
             logger.info('%d\tI: replaced mis-realloc(%x, %d) with alloc(%d)'
                         ' and free+alloc %s', run.timestamp_ns, begin,
                         inew_alloc.size, inew_alloc.size, inew_allocd)
             return
         self._addr_ivals.add(ival_freed)
 
-        self._allocd(begin_new, end_new, caller='realloc')
-        trace.reallocd(None, stk, tid, begin, begin_new, end_new)
+        self._allocd(event, begin_new, end_new, caller='realloc')
+        trace.reallocd(None, event, begin, begin_new, end_new)
 
 
-    def _shrink_allocd(self, ival_allocd, end_new):
+    def _shrink_allocd(self, event, ival_allocd, end_new):
         inew_freed = AddrIval(ival_allocd.begin, ival_allocd.end, FREED);
         inew_allocd = AddrIval(ival_allocd.begin, end_new, ALLOCD)
         self._addr_ivals.add(inew_freed)
         self._addr_ivals.add(inew_allocd)
-        trace.freed(None, '', '', inew_freed.begin)
-        trace.allocd(None, '', '', inew_allocd.begin, inew_allocd.end)
+        trace.freed(None, event, inew_freed.begin)
+        trace.allocd(None, event, inew_allocd.begin, inew_allocd.end)
         return inew_allocd
 
 
     # XXX-LPT: these would not be needed if the Unrun instance could be a
     # direct Run listener
-    def mapd(self, stk, tid, begin, end, prot):
-        trace.mapd(None, stk, tid, begin, end, prot)
+    def mapd(self, event, begin, end, prot):
+        trace.mapd(None, event, begin, end, prot)
 
-    def unmapd(self, stk, tid, begin, end):
-        trace.unmapd(None, stk, tid, begin, end)
+    def unmapd(self, event, begin, end):
+        trace.unmapd(None, event, begin, end)
 
     def size_measured(self, size):
         trace.size_measured(None, size)

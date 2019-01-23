@@ -117,7 +117,7 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
         return self._total
 
 
-    def allocd(self, stk, tid, begin, end):
+    def allocd(self, event, begin, end):
         interval = AddrIval(begin, end, AddrIvalState.ALLOCD)
         overlaps = self.addr_ivals_sorted(begin, end)
         overlaps_allocd = [o for o in overlaps if o.state is AddrIvalState.ALLOCD]
@@ -151,17 +151,17 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
                 logger.critical("%d\tCrit: New allocation %s re-uses %s, exiting as instructed "
                              "by --exit-on-reuse", run.timestamp, interval, overlaps_freed)
                 sys.exit(1)
-            self._publish('reused', stk, tid, begin, end)
+            self._publish('reused', event, begin, end)
         super()._update(interval)
         self.__addr_ivals.add(interval)
 
 
-    def reallocd(self, stk, tid, begin_old, begin_new, end_new):
+    def reallocd(self, event, begin_old, begin_new, end_new):
         interval_old = self.addr_ival(begin_old)
         if not interval_old:
             logger.warning('%d\tW: No existing allocation to realloc at %x, doing just alloc',
                   run.timestamp, begin_old)
-            self.allocd(stk, tid, begin_new, end_new)
+            self.allocd(event, begin_new, end_new)
             return
         if interval_old.state is not AddrIvalState.ALLOCD:
             logger.warning('%d\tW: Realloc of non-allocated interval %s, assuming it is allocated',
@@ -182,12 +182,12 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
                 self._realloc_stubs.add(ival_old_stub)
         else:
             # XXX use _freed and eliminate spurious W/E reporting
-            self.freed(stk, tid, begin_old)
+            self.freed(event, begin_old)
 
-        self.allocd(stk, tid, begin_new, end_new)
+        self.allocd(event, begin_new, end_new)
 
 
-    def freed(self, stk, tid, begin):
+    def freed(self, event, begin):
         interval = self.addr_ival(begin)
         if interval:
             if begin != interval.begin or interval.state is not AddrIvalState.ALLOCD:
@@ -201,7 +201,7 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
         self.__addr_ivals.add(interval)
 
 
-    def revoked(self, stk, tid, *bes):
+    def revoked(self, event, *bes):
         if not isinstance(bes[0], tuple):
             bes = [(bes[0], bes[1])]
         query_and_overlaps = [((b, e), self.addr_ivals_sorted(b, e)) for b, e in bes]
@@ -256,10 +256,10 @@ class MappedAddrSpaceModel(BaseIntervalAddrSpaceModel):
     def mapd_size(self):
         return self._total
 
-    def mapd(self, _, __, begin, end, ___):
+    def mapd(self, event, begin, end, _):
         self._update(AddrIval(begin, end, AddrIvalState.MAPD))
 
-    def unmapd(self, _, __, begin, end):
+    def unmapd(self, event, begin, end):
         self._update(AddrIval(begin, end, AddrIvalState.UNMAPD))
 
 
@@ -270,8 +270,8 @@ class AllocatorMappedAddrSpaceModel(MappedAddrSpaceModel):
     def call_is_from_allocator(callstack):
        return any(callstack.find(frame) >= 0 for frame in ('malloc', 'calloc', 'realloc', 'free'))
 
-    def mapd(self, callstack, tid, begin, end, prot):
-        if prot == 0b11 and AMAS.call_is_from_allocator(callstack):
+    def mapd(self, event, begin, end, prot):
+        if prot == 0b11 and AMAS.call_is_from_allocator(event['callstack']):
             self._update(AddrIval(begin, end, AddrIvalState.MAPD))
 
     # Inherits the unmapd() method, accepting unmaps that are also external to the allocator.
@@ -285,30 +285,30 @@ class AccountingAllocatedAddrSpaceModel(BaseAddrSpaceModel):
         self.allocd_size = 0
         self.mapd_size = 0
 
-    def mapd(self, callstack, tid, begin, end, prot):
-        if prot == 0b11 and AMAS.call_is_from_allocator(callstack):
+    def mapd(self, event, begin, end, prot):
+        if prot == 0b11 and AMAS.call_is_from_allocator(event['callstack']):
             self.mapd_size += end - begin
         output.update()
-    def unmapd(self, callstack, tid, begin, end):
-        if AMAS.call_is_from_allocator(callstack):
+    def unmapd(self, event, begin, end):
+        if AMAS.call_is_from_allocator(event['callstack']):
             self.mapd_size -= end - begin
 
-    def allocd(self, stk, tid, begin, end):
+    def allocd(self, event, begin, end):
         sz = end - begin
         self._va2sz[begin] = sz
         self.allocd_size += sz
         output.update()
-    def freed(self, stk, tid, begin):
+    def freed(self, event, begin):
         sz = self._va2sz.get(begin)
         if sz is not None :
             self.allocd_size -= sz
             del self._va2sz[begin]
-    def reallocd(self, stk, tid, obegin, nbegin, nend):
-        self.freed(stk, tid, obegin)
-        self.allocd(stk, tid, nbegin, nend)
+    def reallocd(self, event, obegin, nbegin, nend):
+        self.freed(event, obegin)
+        self.allocd(event, nbegin, nend)
 
 class AllocatedAddrSpaceModelSubscriber:
-    def reused(self, alloc_state, stk, tid, begin, end):
+    def reused(self, alloc_state, event, begin, end):
         raise NotImplementedError
 
 
@@ -330,7 +330,7 @@ class BaseSweepingRevoker(AllocatedAddrSpaceModelSubscriber):
         return self.swept // 2**30
 
 
-    def revoked(self, stk, tid, *bes):
+    def revoked(self, event, *bes):
         self._sweep(addr_space.sweep_size, [AddrIval(b, e, AddrIvalState.FREED) for b, e in bes])
 
 
@@ -352,17 +352,17 @@ class BaseSweepingRevoker(AllocatedAddrSpaceModelSubscriber):
 
 
 class SimpleSweepingRevoker(BaseSweepingRevoker):
-    def reused(self, alloc_state, stk, tid, begin, end):
+    def reused(self, alloc_state, event, begin, end):
         intervals = [i for i in alloc_state.addr_ivals_sorted(begin, end) if i.state is AddrIvalState.FREED]
         if intervals:
             self._sweep(addr_space.sweep_size, intervals)
         for ival in intervals:
-            alloc_state.revoked(stk, tid, ival.begin, ival.end)
+            alloc_state.revoked(event, ival.begin, ival.end)
         return intervals
 
 
 class CompactingSweepingRevoker(BaseSweepingRevoker):
-    def reused(self, alloc_state, stk, tid, begin, end):
+    def reused(self, alloc_state, event, begin, end):
         overlaps = [i for i in alloc_state.addr_ivals_sorted(begin, end) if i.state is AddrIvalState.FREED]
         how_coalesce = {'coalesce_with_self_and_values': (AddrIvalState.REVOKED,),
                         'coalesce_beyond_values': (None,)}
@@ -389,7 +389,7 @@ class CompactingSweepingRevoker(BaseSweepingRevoker):
                 addr_fwd = max(addr_fwd + 0x1000, olaps_coalesced[-1].end)
             self._sweep(addr_space.sweep_size, olaps_coalesced)
         for ival in olaps_coalesced:
-            alloc_state.revoked(stk, tid, ival.begin, ival.end)
+            alloc_state.revoked(event, ival.begin, ival.end)
 
         return olaps_coalesced
 
@@ -419,7 +419,7 @@ class ColouringRevoker(AllocatedAddrSpaceModelSubscriber):
         return self._sweeping_revoker.swept_ivals
 
 
-    def reused(self, alloc_state, stk, tid, begin, end):
+    def reused(self, alloc_state, event, begin, end):
         # Query for colour intervals in the range.
         # Trim result so that no colour interval expands beyond the range being reused.
         # Calculate the range's new colour.
@@ -440,7 +440,7 @@ class ColouringRevoker(AllocatedAddrSpaceModelSubscriber):
                             "exiting as instructed by --exit-on-colour-reuse", run.timestamp,
                             AddrIval(begin, end, AddrIvalState.ALLOCD), ivals_max_colour, self._ccount)
                 sys.exit(1)
-            ivals_revoked = self._sweeping_revoker.reused(alloc_state, stk, tid, begin, end)
+            ivals_revoked = self._sweeping_revoker.reused(alloc_state, event, begin, end)
             self._reset_addr_ivals_colours(ivals_revoked)
             return ivals_revoked
 
@@ -454,11 +454,11 @@ class ColouringRevoker(AllocatedAddrSpaceModelSubscriber):
             self._addr_ivals_c.remove(i)
 
 
-    def revoked(self, stk, tid, *begs_ends):
+    def revoked(self, event, *begs_ends):
         if not isinstance(begs_ends[0], tuple):
             begs_ends = [(begs_ends[0], begs_ends[1])]
         self._reset_addr_ivals_colours(AddrIval(b, e, AddrIvalState.REVOKED) for b, e in begs_ends)
-        self._sweeping_revoker.revoked(stk, tid, *begs_ends)
+        self._sweeping_revoker.revoked(event, *begs_ends)
 
 
 class BaseOutput:
@@ -547,7 +547,7 @@ class AllocationMapOutput(FileOutput, AllocatedAddrSpaceModelSubscriber):
         alloc_state.register_subscriber(self)
 
 
-    def reused(self, alloc_state, stk, tid, begin, end):
+    def reused(self, alloc_state, event, begin, end):
         self._addr_ivals_reused.add(AddrIval(begin, end, None))
 
 
