@@ -67,12 +67,10 @@ class BaseAddrSpaceModel:
     def sweep_size_mb(self):
         return self.sweep_size // 2**20
 
-    def size_measured(self, size):
+    def aspace_sampled(self, event, size, sweep_size):
         self.size = size
-        output.update()
-
-    def sweep_size_measured(self, sweep_size):
         self.sweep_size = sweep_size
+        output.update()
 
 
 class BaseIntervalAddrSpaceModel(BaseAddrSpaceModel):
