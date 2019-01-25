@@ -229,11 +229,8 @@ class TraceFixups:
     def unmapd(self, event, begin, end):
         trace.unmapd(None, event, begin, end)
 
-    def size_measured(self, size):
-        trace.size_measured(None, size)
-
-    def sweep_size_measured(self, size):
-        trace.sweep_size_measured(None, size)
+    def aspace_sampled(self, event, size, sweep_size):
+        trace.aspace_sampled(event, size, sweep_size)
 
 
 # Parse command line arguments

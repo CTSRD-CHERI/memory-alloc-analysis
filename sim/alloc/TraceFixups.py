@@ -206,11 +206,8 @@ class Allocator(Publisher):
 # --------------------------------------------------------------------- }}}
 # Size-measurement pass-thru ------------------------------------------ {{{
 
-  def size_measured(self, sz):
-    self._publish('size_measured', sz)
-
-  def sweep_size_measured(self, sz):
-    self._publish('sweep_size_measured', sz)
+  def aspace_sampled(self, event, size, sweep_size):
+    self._publish('aspace_sampled', event, size, sweep_size)
 
 # --------------------------------------------------------------------- }}}
 

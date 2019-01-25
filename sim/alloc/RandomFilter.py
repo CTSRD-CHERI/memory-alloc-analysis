@@ -48,11 +48,8 @@ class Allocator (Publisher):
     self._publish('reallocd', stk, tid, ova, nva, nend)
         
   # Pass through
-  def size_measured(self, sz):
-    self._publish('size_measured', sz)
-
-  def sweep_size_measured(self, sz):
-    self._publish('sweep_size_measured', sz)
+  def aspace_sampled(self, event, size, sweep_size):
+    self._publish('aspace_sampled', event, size, sweep_size)
 
   def mapd(self, stk, tid, begin, end, prot):
     self._publish('mapd', stk, tid, begin, end, prot)
