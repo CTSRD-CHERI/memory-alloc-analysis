@@ -318,7 +318,7 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
 
     return [best for best in bests if best[1] >= 0]
 
-  def _do_revoke(self, ss) :
+  def _do_revoke(self, event, ss) :
    if self._paranoia > PARANOIA_STATE_ON_REVOKE : self._state_asserts()
 
    self._brscache = None
@@ -333,9 +333,9 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
         self._junklru.remove(self._junkadn.pop(qb))
         self._mark_tidy(qb, qsz)
 
-   self._publish('revoked', "---", "", *((loc, loc+sz) for (_, loc, sz) in ss))
+   self._publish('revoked', event, *((loc, loc+sz) for (_, loc, sz) in ss))
 
-  def _do_revoke_best_and(self, n=None, revoke=[]) :
+  def _do_revoke_best_and(self, event, n=None, revoke=[]) :
 
     revs = list(revoke)
     assert len(revs) <= self._revoke_k, (revoke)
@@ -361,7 +361,7 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
       rset.add(brss[-1])
       brss = brss[:-1]
 
-    self._do_revoke(rset)
+    self._do_revoke(event, rset)
 
     while brss != [] :
       if brss[-1] not in rset : break
@@ -370,7 +370,7 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
     else          : self._brscache = (0, -1, -1)
 
   @abstractmethod
-  def _maybe_revoke(self):
+  def _maybe_revoke(self, event):
     pass
 
 # --------------------------------------------------------------------- }}}
@@ -388,14 +388,14 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
     except StopIteration :
       return self._wildern
 
-  def _ensure_mapped(self, stk, tid, reqbase, reqsz) :
+  def _ensure_mapped(self, event, reqbase, reqsz) :
     pbase = self._eva2evp(reqbase)
     plim  = self._eva2evp(reqbase + reqsz - 1)
     for (qb, qsz, qv) in self._evp2pst[pbase:plim] :
       if qv == PageSt.MAPD : continue
       if qb + qsz > plim : qsz = plim - qb
       self._nmapped += self._npg2nby(qsz)
-      self._publish('mapd', stk, tid, self._evp2eva(qb), self._evp2eva(qb + qsz), 0b11)
+      self._publish('mapd', event, self._evp2eva(qb), self._evp2eva(qb + qsz), 0b11)
     self._evp2pst.mark(pbase, plim-pbase+1, PageSt.MAPD)
 
   def _mark_allocated(self, reqbase, reqsz) :
@@ -444,15 +444,15 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
     self._wildern = max(self._wildern, reqbase + reqsz)
     self._eva2sst.mark(reqbase, reqsz, SegSt.WAIT)
 
-  def _alloc(self, stk, tid, sz) :
+  def _alloc(self, event, sz) :
     if self._paranoia > PARANOIA_STATE_PER_OPER : self._state_asserts()
 
     if sz < self._minsize : sz = self._minsize   # minimum size
     sz = (sz + self._alignmsk) & ~self._alignmsk # and alignment
 
-    loc = self._alloc_place(stk, sz)
+    loc = self._alloc_place(event.get('callstack'), sz)
 
-    self._ensure_mapped(stk,tid,loc,sz)
+    self._ensure_mapped(event,loc,sz)
     self._mark_allocated(loc,sz)
     self._eva2sz[loc] = sz
     return (loc, sz)
@@ -460,7 +460,7 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
 # --------------------------------------------------------------------- }}}
 # Free ---------------------------------------------------------------- {{{
 
-  def _ensure_unmapped(self, stk, tid, loc, sz):
+  def _ensure_unmapped(self, event, loc, sz):
     pbase = self._eva2evp_roundup(loc)
     plim  = self._eva2evp(loc + sz - 1)
     if pbase == plim : return # might not be an entire page
@@ -468,10 +468,10 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
     for (qb, qsz, qv) in self._evp2pst[pbase:plim] :
       if qv == PageSt.UMAP : continue
       self._nmapped -= self._npg2nby(qsz)
-      self._publish('unmapd', stk, tid, self._evp2eva(qb), self._evp2eva(qb + qsz))
+      self._publish('unmapd', event, self._evp2eva(qb), self._evp2eva(qb + qsz))
     self._evp2pst.mark(pbase, plim-pbase, PageSt.UMAP)
 
-  def _free(self, stk, tid, loc):
+  def _free(self, event, loc):
     if self._paranoia > PARANOIA_STATE_PER_OPER : self._state_asserts()
     assert self._eva2sst[loc][2] == SegSt.WAIT, "free non-WAIT?"
 
@@ -496,9 +496,9 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
     # possibly for some material on either side.
     # XXX configurable policy
     if qsz > (16 * 2**self._pagelog) :
-      self._ensure_unmapped(stk, tid, qb, qsz)
+      self._ensure_unmapped(event, qb, qsz)
 
-  def _free_unsafe(self, stk, tid, loc):
+  def _free_unsafe(self, event, loc):
     if self._paranoia > PARANOIA_STATE_PER_OPER : self._state_asserts()
     assert self._eva2sst[loc][2] == SegSt.WAIT, "free non-WAIT?"
 
@@ -512,12 +512,12 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
     (qb, qsz, qv) = self._eva2sst.get(loc)
     assert qv == SegSt.TIDY
     if qsz > (16 * 2**self._pagelog) :
-      self._ensure_unmapped(stk, tid, qb, qsz)
+      self._ensure_unmapped(event, qb, qsz)
 
 # --------------------------------------------------------------------- }}}
 # Realloc ------------------------------------------------------------- {{{
 
-  def _try_realloc(self, stk, tid, oeva, nsz):
+  def _try_realloc(self, event, oeva, nsz):
     # XXX
     return False
 

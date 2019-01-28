@@ -187,7 +187,7 @@ class Allocator(Publisher):
 # --------------------------------------------------------------------- }}}
 # Revoking ------------------------------------------------------------ {{{
 
-  def revoked(self, stk, spans):
+  def revoked(self, event, spans):
 
     for (begin,end) in spans:
       overlaps = self._aa[begin:end]

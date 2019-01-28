@@ -27,35 +27,35 @@ class Allocator (Publisher):
     self._screw   = args.screw
     self._seed    = args.seed
 
-  def allocd(self, stk, tid, begin, end):
+  def allocd(self, event, begin, end):
     h = hash(marshal.dumps([self._seed, self._allocix, begin]))
     if (h % 256 >= self._screw) :
         self._shadows.add(begin)
         return
-    self._publish('allocd', stk, tid, begin, end)
+    self._publish('allocd', event, begin, end)
 
-  def freed(self, stk, tid, va):
+  def freed(self, event, va):
     if va in self._shadows :
         self._shadows.remove(va)
         return
-    self._publish('freed', stk, tid, va)
+    self._publish('freed', event, va)
 
-  def reallocd(self, stk, tid, ova, nva, nend):
+  def reallocd(self, event, ova, nva, nend):
     if ova in self._shadows :
         self._shadows.remove(ova)
         self._shadows.add(nva)
         return
-    self._publish('reallocd', stk, tid, ova, nva, nend)
+    self._publish('reallocd', event, ova, nva, nend)
         
   # Pass through
   def aspace_sampled(self, event, size, sweep_size):
     self._publish('aspace_sampled', event, size, sweep_size)
 
-  def mapd(self, stk, tid, begin, end, prot):
-    self._publish('mapd', stk, tid, begin, end, prot)
+  def mapd(self, event, begin, end, prot):
+    self._publish('mapd', event, begin, end, prot)
 
-  def unmapd(self, stk, tid, begin, end):
-    self._publish('unmapd', stk, tid, begin, end)
+  def unmapd(self, event, begin, end):
+    self._publish('unmapd', event, begin, end)
 
-  def revoked(self, stk, tid, spans):
-    self._publish('revoked', stk, tid, spans)
+  def revoked(self, event, spans):
+    self._publish('revoked', event, spans)

@@ -357,7 +357,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
     self._brscache = None
 
 
-  def _do_revoke(self, ss) :
+  def _do_revoke(self, event, ss) :
    if self._paranoia > PARANOIA_STATE_ON_REVOKE : self._state_asserts()
 
    nrev = sum([nj for (nj, _, _) in ss if nj > 0])
@@ -370,7 +370,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
    for (nj, bix, sz) in ss :
       self._mark_tidy(bix, sz, nj)
 
-   self._publish('revoked', "---", "",
+   self._publish('revoked', event,
       *((self._bix2va(bix), self._bix2va(bix+sz)) for (_, bix, sz) in ss))
 
 
@@ -381,7 +381,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
   # bases of junk spans which will be guaranteed to be revoked, even if they
   # are not the largest spans known.  This may be used to force some degree
   # of reuse of small spans, as suggested by Hongyan.
-  def _predicated_revoke_best(self, fn, n=None, revoke=[]):
+  def _predicated_revoke_best(self, event, fn, n=None, revoke=[]):
     revoke = list(revoke)
     assert len(revoke) <= self._revoke_k
 
@@ -436,7 +436,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
         rset.add(brss[-1])
         brss = brss[:-1]
 
-      self._do_revoke(rset)
+      self._do_revoke(event, rset)
 
       # Find the largest best span not used and update the cache
       while brss != [] :
@@ -446,7 +446,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
       else          : self._brscache = (0, -1, -1)
 
   @abstractmethod
-  def _maybe_revoke(self) :
+  def _maybe_revoke(self, event) :
     # By default, don't!
     #
     # A reasonable implementation of this function will look like a series
@@ -517,7 +517,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
     self._maxbix = max(self._maxbix, reqbase + reqbsz)
     self._bix2state.mark(reqbase, reqbsz, nst)
 
-  def _alloc(self, stk, tid, sz):
+  def _alloc(self, event, sz):
     if __debug__ : logging.debug(">_alloc sz=%d", sz)
     if self._paranoia > PARANOIA_STATE_PER_OPER : self._state_asserts()
 
@@ -532,9 +532,9 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
       nsz = self._szfix(sz)
       bbs = self._szbix2ap.get(nsz, {})
 
-      bbix = self._alloc_place_small(stk, sz, iter(bbs.keys()), tidys)
+      bbix = self._alloc_place_small(event.get('callstack'), sz, iter(bbs.keys()), tidys)
       if bbix not in bbs :
-        self._publish('mapd', stk, tid, self._bix2va(bbix), self._bix2va(bbix+1), 0b11)
+        self._publish('mapd', event, self._bix2va(bbix), self._bix2va(bbix+1), 0b11)
         self._mark_allocated(bbix, 1, BuckSt.BUMP)
         self._bix2szbm[bbix] = (nsz, 0)
         if nsz not in self._szbix2ap : self._szbix2ap[nsz] = {}
@@ -568,7 +568,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
 
       # Placement
       bsz = self._sz2nbucks(sz)
-      bbix = self._alloc_place_large(stk, bsz, tidys)
+      bbix = self._alloc_place_large(event.get('callstack'), bsz, tidys)
 
       if __debug__ :
         (pbase, psz, pv) = self._bix2state.get(bbix)
@@ -578,7 +578,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
       self._mark_allocated(bbix, bsz, BuckSt.WAIT)
       self._bix2szbm[bbix] = (sz, 0)
       res = self._bix2va(bbix)
-      self._publish('mapd', stk, tid, res, res + self._nbucks2sz(bsz), 0b11)
+      self._publish('mapd', event, res, res + self._nbucks2sz(bsz), 0b11)
 
       nsz = self._nbucks2sz(bsz)
 
@@ -635,7 +635,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
     elif r is None  : pass
     else : assert False, "Invalid return from _on_free_bix: %r" % r
 
-  def _free(self, stk, tid, eva) :
+  def _free(self, event, eva) :
     if __debug__ : logging.debug(">_free eva=%x", eva)
     if self._paranoia > PARANOIA_STATE_PER_OPER : self._state_asserts()
 
@@ -682,7 +682,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
         # XXX At the moment, we only unmap when the entire bucket is free.
         # This is just nwf being lazy and not wanting to do the bit math for
         # page-at-a-time release.
-        self._publish('unmapd', stk, tid, self._bix2va(bix), self._bix2va(bix+1))
+        self._publish('unmapd', event, self._bix2va(bix), self._bix2va(bix+1))
 
       else :
         # Just update
@@ -698,7 +698,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
 
 
       self._free_bix(bix, bsz)
-      self._publish('unmapd', stk, tid, self._bix2va(bix), self._bix2va(bix+bsz))
+      self._publish('unmapd', event, self._bix2va(bix), self._bix2va(bix+bsz))
     if __debug__ : logging.debug("<_free eva=%x", eva)
 
 # --------------------------------------------------------------------- }}}
@@ -723,7 +723,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
   # overlapping the revocation region (subsuming capabilities are presumably
   # OK, as the allocator holds these).
   #
-  def _try_realloc_yes(self, stk, tid, oeva, nsz):
+  def _try_realloc_yes(self, event, oeva, nsz):
     if self._paranoia > PARANOIA_STATE_PER_OPER : self._state_asserts()
 
     # Find the size of the existing allocation
@@ -779,7 +779,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
           self._bix2va(bix), osz, nsz)
       self._bix2szbm[bix] = (nsz, 0)
       self._mark_allocated(eix, self._sz2nbucks(nsz - osz), BuckSt.WAIT)
-      self._publish('mapd', stk, tid,
+      self._publish('mapd', event,
                     self._nbucks2sz(bix + self._sz2nbucks(osz)), \
                     self._nbucks2sz(bix + self._sz2nbucks(nsz)), 0b11)
       return True
@@ -790,7 +790,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
   # bigger than size rounded up, in terms of bitmap buckets; we don't have
   # the original size to enforce a strict shrinkage policy); see caveat
   # above for why this does not transition any bytes to JUNK.
-  def _try_realloc_onlyshrink(self, stk, tid, oeva, nsz):
+  def _try_realloc_onlyshrink(self, event, oeva, nsz):
     if self._paranoia > PARANOIA_STATE_PER_OPER : self._state_asserts()
 
     # Find the size of the existing allocation
@@ -804,7 +804,7 @@ class ClingyAllocatorBase(RenamingAllocatorBase):
     (osz, _) = b
     return nsz <= osz
 
-  def _try_realloc_never(self, stk, tid, oeva, nsz):
+  def _try_realloc_never(self, event, oeva, nsz):
     # Don't bother with PARANOIA_STATE_PER_OPER since we're just going to
     # call down anyway
 

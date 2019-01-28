@@ -53,7 +53,7 @@ class Allocator(ClingyAllocatorBase):
     if args.unsafe_reuse :
       self._on_bucket_free = self._on_bucket_free_unsafe
 
-  def _maybe_revoke(self):
+  def _maybe_revoke(self, event):
     # Revoke only if all of
     #
     # we're above our permitted overhead factor (which is the ratio of BUMP|WAIT to JUNK buckets)
@@ -72,7 +72,7 @@ class Allocator(ClingyAllocatorBase):
          and (ts - self._lastrevt >= self._revoke_t)
        ):
 
-        self._predicated_revoke_best(lambda nrev : ntidy < self._rev_tidy_factor * nrev,
+        self._predicated_revoke_best(event, lambda nrev : ntidy < self._rev_tidy_factor * nrev,
                 revoke=map(lambda x : x[0], itertools.islice(self._junklru, self._rev_lru)))
         self._lastrevt = self._tslam()
 

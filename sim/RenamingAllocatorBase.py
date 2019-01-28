@@ -5,10 +5,10 @@
 # 
 # Children should implement all their logic transitively in
 #
-#  _alloc(stk, tid, size) -> eva
-#  _free(stk, tid, eva) -> None
+#  _alloc(event, size) -> eva
+#  _free(event, eva) -> None
 #  _try_realloc(stk, eva, nsz) -> Bool
-#  _maybe_revoke() -> None
+#  _maybe_revoke(event) -> None
 #
 # Children should publish their own version of events that this module
 # swallows, specifically:
@@ -31,50 +31,47 @@ class RenamingAllocatorBase (Publisher):
     self._tva2eva = {}
 
   # Alloc then publish, which is the natural order of effects
-  def allocd(self, stk, tid, begin, end):
+  def allocd(self, event, begin, end):
     # if begin == 0 : return  # Don't translate failing applications
 
-    stk_delegate = stk if stk else 'malloc'
     sz = end - begin
-    (eva, nsz) = self._alloc(stk_delegate, tid, sz)
+    (eva, nsz) = self._alloc(event, sz)
     assert nsz >= sz
     self._tva2eva[begin] = eva
-    self._publish('allocd', stk, tid, eva, eva+nsz)
-    self._maybe_revoke()
+    self._publish('allocd', event, eva, eva+nsz)
+    self._maybe_revoke(event)
 
   # Publish then free, so that effects (e.g. unmap) occur in the right order!
-  def freed(self, stk, tid, begin):
-    stk_delegate = stk if stk else 'free'
+  def freed(self, event, begin):
     eva = self._tva2eva.get(begin, None)
     if eva is not None :
-      self._publish('freed', stk, tid, eva)
-      self._free(stk_delegate, tid, eva)
-      self._maybe_revoke()
+      self._publish('freed', event, eva)
+      self._free(event, eva)
+      self._maybe_revoke(event)
       del self._tva2eva[begin]
 
-  def reallocd(self, stk, tid, begin_old, begin_new, end_new):
-    stk_delegate = stk if stk else 'realloc'
+  def reallocd(self, event, begin_old, begin_new, end_new):
     szn = end_new - begin_new
     evao = self._tva2eva.get(begin_old, None)
     if evao is not None :
 
-      if self._try_realloc(stk_delegate, tid, evao, szn) : 
-        return self._publish('reallocd', stk, tid, evao, evao, evao+szn)
+      if self._try_realloc(event, evao, szn) : 
+        return self._publish('reallocd', event, evao, evao, evao+szn)
 
       # otherwise, alloc new thing, free old thing
-      (evan, sznn) = self._alloc(stk_delegate, tid, szn)
-      self._free(stk_delegate, tid, evao)
+      (evan, sznn) = self._alloc(event, szn)
+      self._free(event, evao)
 
       # Update TVA map; delete old then add new in case of equality
       del self._tva2eva[begin_old]
       self._tva2eva[begin_new] = evan
 
-      self._publish('reallocd', stk, tid, evao, evan, evan+sznn)
+      self._publish('reallocd', event, evao, evan, evan+sznn)
     else :
       # We don't seem to have that address on file; allocate it
       # (This should include NULL, yeah?)
-      self.allocd(stk, tid, begin_new, end_new)
-    self._maybe_revoke()
+      self.allocd(event, begin_new, end_new)
+    self._maybe_revoke(event)
 
   # Pass through
   def aspace_sampled(self, record, size, sweep_size):
@@ -86,11 +83,11 @@ class RenamingAllocatorBase (Publisher):
   # order, we are only out to model allocator placements, and can
   # synthesize our own map and unmap events, don't pass these further
   # along the pipeline.
-  def mapd(self, stk, tid, begin, end, prot):
+  def mapd(self, event, begin, end, prot):
     pass
 
-  def unmapd(self, stk, tid, begin, end):
+  def unmapd(self, event, begin, end):
     pass
 
-  def revoked(self, stk, tid, spans):
+  def revoked(self, event, spans):
     pass
