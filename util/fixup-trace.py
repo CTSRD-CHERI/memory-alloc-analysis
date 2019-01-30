@@ -230,7 +230,7 @@ class TraceFixups:
         trace.unmapd(None, event, begin, end)
 
     def aspace_sampled(self, event, size, sweep_size):
-        trace.aspace_sampled(event, size, sweep_size)
+        trace.aspace_sampled(None, event, size, sweep_size)
 
 
 # Parse command line arguments
