@@ -281,6 +281,7 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
   #
   # Inserts the coalesced span at the end of tidylst.
   def _mark_tidy(self, loc, sz):
+      self._eva2sst.mark(loc, sz, SegSt.TIDY)
       self._tidylst.insert(loc, sz)
 
   # An actual implementation would maintain a prioqueue or something;
@@ -405,27 +406,39 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
         (reqbase, reqsz), (qbase, qsz, qv), list(self._eva2sst))
       assert qbase + qsz >= reqbase + reqsz, "New allocated undersized?"
 
-    # Homesteading beyond the wildnerness frontier leaves a TIDY gap
-    if reqbase > self._wildern :
-      self._mark_tidy(self._wildern, reqbase - self._wildern)
+    if reqbase >= self._wildern :
+      # Homesteading beyond the wildnerness frontier leaves a TIDY gap
+      if reqbase > self._wildern :
+        self._mark_tidy(self._wildern, reqbase - self._wildern)
 
-    # Remove span from tidy list; may create two more entries.
-    # No need to use the coalescing insert functionality here because we
-    # know, inductively, that we certainly won't coalesce in either direction.
-    #
-    # XXX We act as though any residual spans have been just created; is
-    # that the right policy?
-    #
-    # XXX Don't create segments less than the minimum allocation size, as
-    # there's no possible utility to them and we'll catch them
-    # post-coalescing in mark_tidy.  This change will require modification
-    # to our asserts and sanity checking, too.
-    if reqbase < self._wildern:
+      # In this branch, there are no free list entries to manipulate, since
+      # the free list tracks only things below the wilderness frontier.  So
+      # just go ahead and mark the request as WAITing.
+      self._eva2sst.mark(reqbase, reqsz, SegSt.WAIT)
+
+    else :
+
+      # Remove span from tidy list; may create two more entries.  While it
+      # is true, inductively, that these inserts will not coalesce, because
+      # the SFL has a mind of its own, it is important that we stage things
+      # in the right order: remove the entire TIDY span from the SFL, mark
+      # the current bit as WAIT, and then insert any residual spans.  That
+      # way, when the SFL attempts to coalesce, it will find no opportunity.
+      #
+      # XXX We act as though any residual spans have been just created; is
+      # that the right policy?
+      #
+      # XXX Don't create segments less than the minimum allocation size, as
+      # there's no possible utility to them and we'll catch them
+      # post-coalescing in mark_tidy.  This change will require modification
+      # to our asserts and sanity checking, too.
+
       (qb, qsz, qv) = self._eva2sst[reqbase]
       assert qv == SegSt.TIDY
       assert qsz >= reqsz
       tsz = self._tidylst.remove(qb)
       assert tsz == qsz
+      self._eva2sst.mark(reqbase, reqsz, SegSt.WAIT)
       if qb + qsz != reqbase + reqsz :
         # Insert residual right span
         self._tidylst.insert(reqbase+reqsz, qb+qsz-reqbase-reqsz)
@@ -442,7 +455,6 @@ class TraditionalAllocatorBase(RenamingAllocatorBase):
 
     self._nwait += reqsz
     self._wildern = max(self._wildern, reqbase + reqsz)
-    self._eva2sst.mark(reqbase, reqsz, SegSt.WAIT)
 
   def _alloc(self, event, sz) :
     if self._paranoia > PARANOIA_STATE_PER_OPER : self._state_asserts()
