@@ -210,15 +210,46 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
         if overlaps_allocd:
             raise ValueError('Bug: revoking address intervals that are still allocated',
                              run.timestamp, overlaps_allocd)
-        misrevokes = [[i for i in overlaps if i.state is AddrIvalState.FREED and not (b <= i.begin and i.end <= e)]
-                      for (b, e), overlaps in query_and_overlaps]
-        if any(misrevokes):
-            query_and_misrevokes = [(AddrIval(b, e, AddrIvalState.REVOKED), mis)
-                                    for ((b, e), _), mis in zip(query_and_overlaps, misrevokes) if mis]
-            raise ValueError('Bug (incomplete revocation): revoking intervals that do not fully capture '
-                             'the underlying freed allocations', run.timestamp, query_and_misrevokes)
 
-        for begin, end in bes:
+        spans_to_mark_revoked = list(bes)
+        misrevoked = [[i for i in overlaps if i.state is AddrIvalState.FREED and not (b <= i.begin and i.end <= e)]
+                      for (b, e), overlaps in query_and_overlaps]
+        if any(misrevoked):
+            # When the exit_on_reuse mechanism is being used,
+            # allow misrevokes and rather disallow later reuse of any part of
+            # incompletely revoked FREED regions via the exit_on_reuse mechanism.
+            # Shrink the spans to avoid overlapping any part of the misrevoked
+            # interval.
+            if args.exit_on_reuse or args.exit_on_colour_reuse:
+                _adjusted = []
+                for i, mis in ((i, m) for i, m in enumerate(misrevoked) if m):
+                    b, e = b_new, e_new = bes[i]
+                    #  [ FREED ]
+                    #    [ REVOKE -->
+                    if mis[0].begin < b:
+                        b_new = mis[0].end
+                    #        [ FREED ]
+                    #  <-- REVOKE ]
+                    if e < mis[-1].end:
+                        e_new = mis[-1].begin
+                    if b_new < e_new:
+                        spans_to_mark_revoked[i] = b_new, e_new
+                        ival_new = AddrIval(b_new, e_new, AddrIvalState.REVOKED)
+                    #  [   FREED    ]
+                    #      [ REVOKE ] X
+                    #    [ REVOKE ] X
+                    else:
+                        spans_to_mark_revoked[i] = None
+                        ival_new = None
+                    _adjusted.append(((AddrIval(b, e, AddrIvalState.REVOKED), ival_new), mis))
+                logger.warning('%d\tW: Adjusted intervals to revoke %s', run.timestamp, _adjusted)
+            else:
+                query_and_misrevokes = [(AddrIval(b, e, AddrIvalState.REVOKED), mis)
+                                        for ((b, e), _), mis in zip(query_and_overlaps, misrevoked) if mis]
+                raise ValueError('Bug (incomplete revocation): revoking intervals that do not fully capture '
+                                 'the underlying freed allocations', run.timestamp, query_and_misrevokes)
+
+        for begin, end in (s for s in spans_to_mark_revoked if s is not None):
             ival = AddrIval(begin, end, AddrIvalState.REVOKED)
             super()._update(ival)
             self.__addr_ivals.add(ival)
@@ -460,8 +491,39 @@ class ColouringRevoker(AllocatedAddrSpaceModelSubscriber):
     def revoked(self, event, *begs_ends):
         if not isinstance(begs_ends[0], tuple):
             begs_ends = [(begs_ends[0], begs_ends[1])]
-        self._reset_addr_ivals_colours(AddrIval(b, e, AddrIvalState.REVOKED) for b, e in begs_ends)
-        self._sweeping_revoker.revoked(event, *begs_ends)
+        query_and_overlaps = [((b, e), self._addr_ivals_c[b:e]) for b, e in begs_ends]
+
+        # Note: this code is similar to AllocatedAddrSpaceModel.revoked()
+        spans_to_mark_revoked = list(begs_ends)
+        misrevoked = [[i for i in overlaps if i.value and not (b <= i.begin and i.end <= e)]
+                      for (b, e), overlaps in query_and_overlaps]
+        if any(misrevoked):
+            # ColouringRevoker should not clear the colour of misrevokes,
+            # to correctly count later reuse of incompletely revoked FREED
+            # intervals via the exit_on_colour_reuse mechanism.
+            for i, mis in ((i, m) for i, m in enumerate(misrevoked) if m):
+                b, e = b_new, e_new = begs_ends[i]
+                if mis[0].begin < b:
+                    b_new = mis[0].end
+                if e < mis[-1].end:
+                    e_new = mis[-1].begin
+                if b_new < e_new:
+                    spans_to_mark_revoked[i] = b_new, e_new
+                else:
+                    spans_to_mark_revoked[i] = None
+            # Filter out any None span introduced
+            i = 0; li = len(spans_to_mark_revoked) - 1
+            while i < li:
+                if spans_to_mark_revoked[i] is None:
+                    spans_to_mark_revoked[i] = spans_to_mark_revoked.pop()
+                    li -= 1
+                else:
+                    i += 1
+            if spans_to_mark_revoked[-1] is None:
+                spans_to_mark_revoked.pop()
+
+        self._sweeping_revoker.revoked(event, *spans_to_mark_revoked)
+        self._reset_addr_ivals_colours(AddrIval(b, e, AddrIvalState.REVOKED) for b, e in spans_to_mark_revoked)
 
 
 class BaseOutput:
