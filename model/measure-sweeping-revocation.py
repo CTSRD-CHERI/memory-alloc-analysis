@@ -148,8 +148,10 @@ class AllocatedAddrSpaceModel(BaseIntervalAddrSpaceModel, Publisher):
 
         if overlaps_freed:
             if args.exit_on_reuse:
+                suggest = '.  Is --exit-on-colour-reuse intended instead?' \
+                          if args.colouring_revoker else ''
                 logger.critical("%d\tCrit: New allocation %s re-uses %s, exiting as instructed "
-                             "by --exit-on-reuse", run.timestamp, interval, overlaps_freed)
+                          "by --exit-on-reuse" + suggest, run.timestamp, interval, overlaps_freed)
                 sys.exit(1)
             self._publish('reused', event, begin, end)
         super()._update(interval)
@@ -784,10 +786,12 @@ argp.add_argument('sweeping_revoker', nargs='?', default='CompactingSweepingRevo
                   " where N is the revoker capacity (in # of capabilities, defaults to infinity).")
 argp.add_argument('--colouring-revoker', type=int, metavar='N', help="Use a colouring revoker with N colours.  "
                   "A colouring revoker delays sweeping revocation until N+1 reuses of a memory address.")
-argp.add_argument("--exit-on-reuse", action="store_true", help="Stop processing and exit with non-zero code "
+argp.add_argument("--exit-on-reuse", action="store_true", help="Do not generate revocations.  "
+                  "Stop processing and exit with non-zero code "
                   "if the trace contains re-use of freed memory to which there may be unrevoked references."
                   "  This option is used to verify that the allocation trace is free of unsafe memory reuse.")
-argp.add_argument("--exit-on-colour-reuse", action="store_true", help="Stop processing and exit with non-zero code "
+argp.add_argument("--exit-on-colour-reuse", action="store_true", help="Do not generate revocations.  "
+                  "Stop processing and exit with non-zero code "
                   "if the trace contains N+1 reuses of a memory address to which there may be unrevoked references.  "
                   "This option is used together with --colouring-revoker N to verify that the allocation trace is free "
                   "of memory reuse beyond N times.")
