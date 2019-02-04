@@ -417,6 +417,9 @@ class ColouringRevoker(AllocatedAddrSpaceModelSubscriber):
     @property
     def swept_ivals(self):
         return self._sweeping_revoker.swept_ivals
+    @property
+    def sweeps_dist(self):
+        return self._sweeping_revoker.sweeps_dist
 
 
     def reused(self, alloc_state, event, begin, end):
