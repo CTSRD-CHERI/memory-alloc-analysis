@@ -47,6 +47,66 @@ from common.misc import Publisher
 from common.misc import AddrIval, AddrIvalState
 from common.run import Run
 
+#
+# This is a memory allocation model.  The model consumes a C memory allocation
+# trace [1], and tracks which addresses have been allocated, freed, or revoked.
+# It generates revocations to enforce temporal memory safety, or in other words,
+# to neutralise reuse of memory through proper revocation of the capabilities
+# pointing to it.
+#
+# The main output are measures of how much revocation work (sweeping) is needed
+# to do so.  Other outputs provide views into the allocation state.  See the
+# command-line arguments' description.
+#
+# The model can also run in a verifying mode to check that a trace does not
+# contain improper memory reuse (see the --exit-on-reuse options).
+# It is also able to verify against allocation that is subtly unsafe (see the
+# umbrella option --exit_on_unsafe).
+#
+#
+# Error reporting
+# ---------------
+#
+# The model uses standard logging to communicate status about its operation, or
+# about the trace.
+#
+# CRITICAL - messages explaining the cause of an early termination, e.g. a
+#            termination due to the --exit-on-unsafe option.
+#
+# ERROR - messages about memory allocation that is unsafe and that cannot
+#         usually be made temporally safe by generating revocations.  For
+#         example, reusing memory.
+#
+# WARNING - inconsistencies within the trace.  For example, frees without
+#         matching allocations, or allocations on top of existing allocations.
+#         Traces should be run through the util/fixup-trace tool to resolve any
+#         inconsistency.
+#         Warning messages are activated via one of --log-level WARNING, as well
+#         as INFO or DEBUG.
+#
+# INFO
+#
+# DEBUG
+#
+#
+# Notes on the design
+# -------------------
+#
+# There are separate objects that model the different types of allocation in the
+# trace, such as standard C memory allocation (malloc() and friends), or virtual
+# address space allocation (mmap() and friends).
+# The model objects are virtually strict sources of information for the rest
+# of the code.  An exception is the revoker, which changes model state.
+# The model is decoupled from the revoker, it generates "reused" signals, and
+# the revoker subscribes to these.  The other classes here are coupled
+# closely for convenience.
+#
+# - revoke commands between sim and model, and --exit-on-reuse options
+#
+#
+# [1] https://github.com/CTSRD-CHERI/memory-alloc-tracing
+#
+
 class BaseAddrSpaceModel:
     def __init__(self, **kwds):
         super().__init__()
