@@ -95,9 +95,9 @@ do_trace_line(FILE *f) {
 
     uint64_t ts;
     uint64_t tid;
-    uint64_t res;
     char cmd[32];
     char args[128];
+    char res_str[32];
 
     char *b = fgets(lbuf, sizeof lbuf, f);
     if (b != lbuf) {
@@ -111,44 +111,30 @@ do_trace_line(FILE *f) {
         "%" SCNu64 " "      // tid
         "%31s "             // call name
         "%127[^\t] "        // arguments (space-separated)
-        "%" SCNx64 " "      // result (hex)
+        "%31[^\t\n] "       // result (hex string or empty)
         "%*[^\t] "          // alloc-stack (ignored, space-separated)
         "%*s"               // cpu-time (ignored)
         "%*[\r\n]"          // newline (ignored, but must match)
-        , &ts, &tid, cmd, args, &res);
+        , &ts, &tid, cmd, args, res_str);
     if (n == 5) {
-        replay_dprintf("OK: %" PRIu64 " %" PRIu64 " %s %s => 0x%" PRIx64 "\n",
-            ts, tid, cmd, args, res);
-    } else {
-        res = 0;
-    
-        n = sscanf(lbuf,
-            "call-trace "       // header (ignored)
-            "%" SCNu64 " "      // timestamp
-            "%*[^\t] "          // callstack (ignored, space-separated)
-            "%" SCNu64 " "      // tid
-            "%31s "             // call name
-            "%127[^\t] "        // arguments (space-separated)
-            "%*[^\t] "          // alloc-stack (ignored, space-separated)
-            "%*s"               // cpu-time (ignored)
-            "%*[\r\n]"          // newline (ignored, but must match)
-            , &ts, &tid, cmd, args);
-
-        if (n == 4) {
-            replay_dprintf("OK: %" PRIu64 " %" PRIu64 " %s %s => 0 \n",
+        if (strlen(res_str) > 0)
+            replay_dprintf("OK: %" PRIu64 " %" PRIu64 " %s %s => %s\n",
+                ts, tid, cmd, args, res_str);
+        else
+            replay_dprintf("OK: %" PRIu64 " %" PRIu64 " %s %s\n",
                 ts, tid, cmd, args);
-        } else if (feof(f)) {
-            return 1;
-        } else {
-            replay_vprintf("SKIP LINE: %s", lbuf);
-            return 0;
-        }
+    } else if (feof(f)) {
+        return 1;
+    } else {
+        replay_vprintf("SKIP LINE (%d < 5): %s", n, lbuf);
+        return 0;
     }
 
     if (!strcmp(cmd, "free")) {
         /* Find the corresponding allocation and remove it */
         int err = 0;
         uint64_t vaddr = estrtoull(args, 16, &err);
+
         if (err) {
             fprintf(stderr,
                 "Bad free() argument \"%s\" at ts=%" PRIu64 "\n",
@@ -167,6 +153,14 @@ do_trace_line(FILE *f) {
                 args, ts);
             abort();
         }
+        uint64_t res = estrtoull(res_str, 16, &err);
+        if (err) {
+            fprintf(stderr,
+                "Bad malloc() result \"%s\" at ts=%" PRIu64 "\n",
+                res_str, ts);
+            abort();
+        }
+
         struct alloc *f = malloc(MAX(sz, sizeof (struct alloc)));
         if (f == NULL) {
             fprintf(stderr, "OOM at ts=%" PRIu64 "\n", ts);
@@ -200,6 +194,13 @@ bad_calloc:
             n = 1;
             s = sizeof (struct alloc);
         }
+        uint64_t res = estrtoull(res_str, 16, &err);
+        if (err) {
+            fprintf(stderr,
+                "Bad calloc() result \"%s\" at ts=%" PRIu64 "\n",
+                res_str, ts);
+            abort();
+        }
 
         struct alloc *f = calloc(n, s);
         if (f == NULL) {
@@ -230,6 +231,13 @@ bad_realloc:
         size_t sz = estrtoull(sp+1, 10, &err);
         if (err) {
             goto bad_realloc;
+        }
+        uint64_t res = estrtoull(res_str, 16, &err);
+        if (err) {
+            fprintf(stderr,
+                "Bad realloc() result \"%s\" at ts=%" PRIu64 "\n",
+                res_str, ts);
+            abort();
         }
 
         struct alloc *f = find_alloc_for_vaddr(vaddr);
@@ -276,6 +284,13 @@ bad_memalign:
         size_t sz = estrtoull(sp+1, 10, &err);
         if (err) {
             goto bad_memalign;
+        }
+        uint64_t res = estrtoull(res_str, 16, &err);
+        if (err) {
+            fprintf(stderr,
+                "Bad posix_memalign result: \"%s\" at ts=%" PRIu64 "\n",
+                res_str, ts);
+            abort();
         }
 
         align = MAX(align, alignof(struct alloc));
