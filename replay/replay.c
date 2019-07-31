@@ -70,7 +70,7 @@ find_alloc_for_vaddr(uint64_t vaddr) {
         fprintf(stderr,
                 "No active allocation for node at 0x%" PRIx64 "\n",
                 vaddr);
-        abort();
+        exit(1);
     }
 
     return a;
@@ -85,7 +85,7 @@ insert_alloc_for_vaddr(struct alloc *a, uint64_t vaddr) {
         fprintf(stderr,
                 "Conflicting active allocations at 0x%" PRIx64 "\n",
                 vaddr);
-        abort();
+        exit(1);
     }
 }
 
@@ -139,7 +139,7 @@ do_trace_line(FILE *f) {
             fprintf(stderr,
                 "Bad free() argument \"%s\" at ts=%" PRIu64 "\n",
                 args, ts);
-            abort();
+            exit(1);
         }
         struct alloc *f = find_alloc_for_vaddr(vaddr);
         RB_REMOVE(alloc_entries, &allocs, f);
@@ -151,20 +151,20 @@ do_trace_line(FILE *f) {
             fprintf(stderr,
                 "Bad malloc() argument \"%s\" at ts=%" PRIu64 "\n",
                 args, ts);
-            abort();
+            exit(1);
         }
         uint64_t res = estrtoull(res_str, 16, &err);
         if (err) {
             fprintf(stderr,
                 "Bad malloc() result \"%s\" at ts=%" PRIu64 "\n",
                 res_str, ts);
-            abort();
+            exit(1);
         }
 
         struct alloc *f = malloc(MAX(sz, sizeof (struct alloc)));
         if (f == NULL) {
             fprintf(stderr, "OOM at ts=%" PRIu64 "\n", ts);
-            abort();
+            exit(1);
         }
         insert_alloc_for_vaddr(f, res);
     } else if (!strcmp(cmd, "calloc")) {
@@ -175,7 +175,7 @@ bad_calloc:
             fprintf(stderr,
                 "Bad calloc args: \"%s\" at ts=%" PRIu64 "\n",
                 args, ts);
-            abort();
+            exit(1);
         }
 
         *sp = '\0';
@@ -199,13 +199,13 @@ bad_calloc:
             fprintf(stderr,
                 "Bad calloc() result \"%s\" at ts=%" PRIu64 "\n",
                 res_str, ts);
-            abort();
+            exit(1);
         }
 
         struct alloc *f = calloc(n, s);
         if (f == NULL) {
             fprintf(stderr, "OOM at ts=%" PRIu64 "\n", ts);
-            abort();
+            exit(1);
         }
         insert_alloc_for_vaddr(f, res);
 
@@ -218,7 +218,7 @@ bad_realloc:
             fprintf(stderr,
                 "Bad realloc args: \"%s\" at ts=%" PRIu64 "\n",
                 args, ts);
-            abort();
+            exit(1);
         }
 
         *sp = '\0';
@@ -237,7 +237,7 @@ bad_realloc:
             fprintf(stderr,
                 "Bad realloc() result \"%s\" at ts=%" PRIu64 "\n",
                 res_str, ts);
-            abort();
+            exit(1);
         }
 
         struct alloc *f = find_alloc_for_vaddr(vaddr);
@@ -250,7 +250,7 @@ bad_realloc:
 
         if ((sz != 0) && (g == NULL)) {
             fprintf(stderr, "OOM at ts=%" PRIu64 "\n", ts);
-            abort();
+            exit(1);
         }
 
         if ((g != NULL) && (res != 0)) {
@@ -271,7 +271,7 @@ bad_memalign:
             fprintf(stderr,
                 "Bad posix_memalign args: \"%s\" at ts=%" PRIu64 "\n",
                 args, ts);
-            abort();
+            exit(1);
         }
 
         *sp = '\0';
@@ -290,7 +290,7 @@ bad_memalign:
             fprintf(stderr,
                 "Bad posix_memalign result: \"%s\" at ts=%" PRIu64 "\n",
                 res_str, ts);
-            abort();
+            exit(1);
         }
 
         align = MAX(align, alignof(struct alloc));
@@ -300,7 +300,7 @@ bad_memalign:
         err = posix_memalign(&f, align, sz);
         if (err) {
             fprintf(stderr, "OOM (err=%d) at ts=%" PRIu64 "\n", err, ts);
-            abort();
+            exit(1);
         }
 
         insert_alloc_for_vaddr(f, res);
