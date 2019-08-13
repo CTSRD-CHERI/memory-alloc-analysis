@@ -34,9 +34,10 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/tree.h>
 #include <unistd.h>
 
-#include <sys/tree.h>
+#include "mapd_aspace.h"
 
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
 
@@ -503,8 +504,8 @@ do_aspace_sample_spec(char *lbuf)
     return 0;
 }
 
-static int aspace_size;
-static int aspace_capdirty_size;
+static int g_aspace_size = 0;
+static int g_aspace_capdirty_size = 0;
 
 int
 do_aspace_sample(char *lbuf)
@@ -552,6 +553,15 @@ do_aspace_sample(char *lbuf)
                 "required fields"
                 "\n\tat line %d: '%s'\n", fields, FIELDS, line_no, line);
         return 1;
+    }
+
+    if (g_aspace_capdirty_size < capdirty_size) {
+        size_t d = capdirty_size - g_aspace_capdirty_size;
+        g_aspace_capdirty_size += mapd_aspace_add(d);
+    } else if (g_aspace_capdirty_size > capdirty_size) {
+        size_t d = g_aspace_capdirty_size - capdirty_size;
+        g_aspace_capdirty_size -= mapd_aspace_remove(d);
+        assert(g_aspace_capdirty_size >= 0);
     }
 
     return 0;
