@@ -114,7 +114,14 @@ static struct call_trace_spec {
     _spec_field_t res;
 } trace_spec;
 
+static struct aspace_sample_spec {
+    _spec_field_t ts;
+    _spec_field_t aspace_size;
+    _spec_field_t aspace_capdirty_size;
+} aspace_sample_spec;
+
 static bool trace_spec_parsed = false;
+static bool aspace_sample_spec_parsed = false;
 
 static void
 trace_spec_init(void) {
@@ -128,11 +135,45 @@ trace_spec_init(void) {
     trace_spec_parsed = false;
 }
 
+static void
+aspace_sample_spec_init(void) {
+    static const struct aspace_sample_spec as =
+                                              {{.n = "timestamp",       .i = 0},
+                                               {.n = "addr-space-size", .i = 0},
+                                               {.n = "sweep-amount",    .i = 0},
+                                              };
+    aspace_sample_spec = as;
+    aspace_sample_spec_parsed = false;
+}
+
+#define INIT_MISSING(...) do { \
+    char missing[512] = {[0] = '\0'};   \
+    int missing_strlen = 0;             \
+    int missing_strlen_max = sizeof(missing) - 1;
+
+#define UNINIT_MISSING(...)    } while(0)
+
+#define APPEND_TO_MISSING(str) do { \
+    int __len = strlen(str);     \
+    if (missing_strlen + 1 + __len < missing_strlen_max) {   \
+        missing[missing_strlen++] = ' ';           \
+        missing[missing_strlen] = '\0';            \
+        strcat(missing, str);  \
+        missing_strlen += __len; \
+    } \
+    } while (0)
+
+#define CHECK_SPEC_FIELD_MISSING(spec_field) do {    \
+    if (!spec_field.i) {                     \
+        APPEND_TO_MISSING(spec_field.n);     \
+    } \
+    } while(0)
 
 static int
 do_call_trace_spec(char *lbuf) {
     char *rest = lbuf;
     const char *field;
+    int ret;
 
     trace_spec_init();
 
@@ -150,38 +191,20 @@ do_call_trace_spec(char *lbuf) {
             trace_spec.res.i = i;
     }
 
-    char missing[512] = {[0] = '\0'};
-    int missing_strlen = 0;
-    int missing_strlen_max = sizeof(missing) - 1;
-#define APPEND_TO_MISSING(str) do { \
-    int __len = strlen(str);     \
-    if (missing_strlen + 1 + __len < missing_strlen_max) {   \
-        missing[missing_strlen++] = ' ';           \
-        missing[missing_strlen] = '\0';            \
-        strcat(missing, str);  \
-        missing_strlen += __len; \
-    } \
-    } while (0)
-
-#define CHECK_SPEC_FIELD(spec_field) do {    \
-    if (!spec_field.i) {                     \
-        APPEND_TO_MISSING(spec_field.n);     \
-    } \
-    } while(0)
-    CHECK_SPEC_FIELD(trace_spec.ts);
-    CHECK_SPEC_FIELD(trace_spec.tid);
-    CHECK_SPEC_FIELD(trace_spec.name);
-    CHECK_SPEC_FIELD(trace_spec.args);
-    CHECK_SPEC_FIELD(trace_spec.res);
-#undef CHECK_SPEC_FIELD
-
-#undef APPEND_TO_MISSING
+    INIT_MISSING();
+    CHECK_SPEC_FIELD_MISSING(trace_spec.ts);
+    CHECK_SPEC_FIELD_MISSING(trace_spec.tid);
+    CHECK_SPEC_FIELD_MISSING(trace_spec.name);
+    CHECK_SPEC_FIELD_MISSING(trace_spec.args);
+    CHECK_SPEC_FIELD_MISSING(trace_spec.res);
 
     if (missing_strlen > 0) {
         fprintf(stderr, "call-trace specification is missing field%s"
                   "\n\tat line %d: '%s'\n", missing, line_no, line);
         return 1;
     }
+    UNINIT_MISSING();
+
     trace_spec_parsed = true;
     return 0;
 }
@@ -446,6 +469,93 @@ bad_memalign:
     return 0;
 }
 
+int
+do_aspace_sample_spec(char *lbuf)
+{
+    char *rest = lbuf;
+    const char *field;
+
+    aspace_sample_spec_init();
+
+    (void)strsep(&rest, "\t\n");
+    for (int i = 1; (field = strsep(&rest, "\t\n")) != NULL; i++) {
+        if (strstr(field, aspace_sample_spec.ts.n) == field)
+            aspace_sample_spec.ts.i = i;
+        else if (strstr(field, aspace_sample_spec.aspace_size.n) == field)
+            aspace_sample_spec.aspace_size.i = i;
+        else if (strstr(field, aspace_sample_spec.aspace_capdirty_size.n) == field)
+            aspace_sample_spec.aspace_capdirty_size.i = i;
+    }
+
+    INIT_MISSING();
+    CHECK_SPEC_FIELD_MISSING(aspace_sample_spec.ts);
+    CHECK_SPEC_FIELD_MISSING(aspace_sample_spec.aspace_size);
+    CHECK_SPEC_FIELD_MISSING(aspace_sample_spec.aspace_capdirty_size);
+
+    if (missing_strlen > 0) {
+        fprintf(stderr, "call-trace specification is missing field%s"
+                  "\n\tat line %d: '%s'\n", missing, line_no, line);
+        return 1;
+    }
+    UNINIT_MISSING();
+
+    aspace_sample_spec_parsed = true;
+    return 0;
+}
+
+static int aspace_size;
+static int aspace_capdirty_size;
+
+int
+do_aspace_sample(char *lbuf)
+{
+    static const int FIELDS = sizeof(struct aspace_sample_spec) /
+                              sizeof(_spec_field_t);
+    uint64_t ts;
+    uint64_t aspace_size;
+    uint64_t capdirty_size;
+
+    if (!aspace_sample_spec_parsed)
+        errx(1, "Missing specification '@record-type:aspace-sample'");
+
+    int i = 0, fields = 0;
+    for(char *field, *rest = lbuf; (field = strsep(&rest, "\t\n")) != NULL; i++) {
+        if (aspace_sample_spec.ts.i == i) {
+            int err = 0;
+            char *ts_str = field;
+            ts = estrtoull(ts_str, 10, &err);
+            if (err)
+                errx(1, "Bad timestamp '%s'"
+                        "\nat line %d: '%s'", ts_str, line_no, line);
+            fields++;
+        } else if (aspace_sample_spec.aspace_size.i == i) {
+            int err = 0;
+            char *aspace_size_str = field;
+            aspace_size = estrtoull(aspace_size_str, 10, &err);
+            if (err)
+                errx(1, "Bad addr-space-size '%s'"
+                        "\nat line %d: '%s'", aspace_size_str, line_no, line);
+            fields++;
+        } else if (aspace_sample_spec.aspace_capdirty_size.i == i) {
+            int err = 0;
+            char *capdirty_size_str = field;
+            capdirty_size = estrtoull(capdirty_size_str, 10, &err);
+            if (err)
+                errx(1, "Bad sweep-amount '%s'"
+                        "\nat line %d: '%s'", capdirty_size_str, line_no, line);
+            fields++;
+        }
+        if (fields == FIELDS) break;
+    }
+    if (fields < FIELDS) {
+        fprintf(stderr, "Bad 'aspace-sample' record line with only %d out of %d "
+                "required fields"
+                "\n\tat line %d: '%s'\n", fields, FIELDS, line_no, line);
+        return 1;
+    }
+
+    return 0;
+}
 
 int
 main(int argc, char **argv) {
@@ -453,6 +563,7 @@ main(int argc, char **argv) {
     char lbuf[16384];
     int ret;
     bool is_call_trace_spec, is_call_trace;
+    bool is_aspace_sample_spec, is_aspace_sample;
 
     f = stdin;
 
@@ -468,7 +579,13 @@ main(int argc, char **argv) {
         is_call_trace_spec = strncmp("@record-type:call-trace", line, 23) == 0;
         is_call_trace = !is_call_trace_spec &&
                              strncmp("call-trace", line, 10) == 0;
-        if (!is_call_trace_spec && !is_call_trace) {
+        is_aspace_sample_spec = !is_call_trace_spec && !is_call_trace &&
+                             strncmp("@record-type:aspace-sample", line, 26)==0;
+        is_aspace_sample = !is_call_trace_spec && !is_call_trace_spec &&
+                             !is_aspace_sample_spec &&
+                             strncmp("aspace-sample", line, 13) == 0;
+        if (!is_call_trace_spec && !is_call_trace &&
+            !is_aspace_sample_spec && !is_aspace_sample) {
             replay_vprintf("SKIP RECORD LINE %d: %s", line_no, line);
             continue;
         }
@@ -482,6 +599,10 @@ main(int argc, char **argv) {
             ret = do_call_trace_spec(lbuf);
         } else if (is_call_trace) {
             ret = do_call_trace(lbuf);
+        } else if (is_aspace_sample_spec) {
+            ret = do_aspace_sample_spec(lbuf);
+        } else if (is_aspace_sample) {
+            ret = do_aspace_sample(lbuf);
         }
         if (ret)
             replay_dprintf("SKIP RECORD LINE %d: %s", line_no, line);
