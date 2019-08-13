@@ -615,7 +615,7 @@ main(int argc, char **argv) {
             ret = do_aspace_sample(lbuf);
         }
         if (ret)
-            replay_dprintf("SKIP RECORD LINE %d: %s", line_no, line);
+            replay_vprintf("SKIP RECORD LINE %d: %s", line_no, line);
     }
 
     if (!feof(f) && ferror(f)) {
