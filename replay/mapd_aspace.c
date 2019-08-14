@@ -1,9 +1,13 @@
 #include <assert.h>
-#include <stdlib.h>
 #include <err.h>
 #include <sys/mman.h>
 #include <sys/param.h>
 #include <sys/queue.h>
+#include <stdlib.h>
+
+#ifdef __CHERI__
+#include <cheri/cheric.h>
+#endif
 
 #include "mapd_aspace.h"
 
@@ -12,6 +16,13 @@
         (((x) >> PAGE_SHIFT) << PAGE_SHIFT)
 #define PAGE_ALIGN_UP(x)   \
         PAGE_ALIGN_DOWN((x) + PAGE_SIZE - 1)
+
+#ifdef __CHERI__
+#define CHERI_ALIGN_DOWN(x)   \
+        (((x) >> CHERI_ALIGN_SHIFT(x)) << CHERI_ALIGN_SHIFT(x))
+#define CHERI_ALIGN_UP(x)   \
+        CHERI_ALIGN_DOWN((x) + (1 << CHERI_ALIGN_SHIFT(x)) - 1)
+#endif
 
 
 struct mapd_aspace {
@@ -28,6 +39,16 @@ static struct mapd_aspace *
 mapd_aspace_alloc(size_t size) {
 	void *m;
 	struct mapd_aspace *mas;
+#ifdef __CHERI__
+	/*
+	 * On CHERI, ensure further alignment to allow mmap() to return a
+	 * precise capability.  Imprecise capabilities are only possible
+	 * with MAP_FIXED or by sysctl system-wide control option, none
+	 * of which are suitable or desirable here.
+	 */
+	size_t size_orig = size;
+	size = CHERI_ALIGN_UP(size);
+#endif
 
 	mas = malloc(sizeof(struct mapd_aspace));
 	if (!mas)
@@ -35,7 +56,11 @@ mapd_aspace_alloc(size_t size) {
 	m = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE |
 	         MAP_ALIGNED(PAGE_SHIFT), -1, 0);
 	if (m == MAP_FAILED)
+#ifdef __CHERI__
+		err(1, "mapd_aspace_alloc(size=%lu (was %lu))", size, size_orig);
+#else
 		err(1, "mapd_aspace_alloc(size=%lu)", size);
+#endif
 
 	mas->as_start = m;
 	mas->as_size = size;
